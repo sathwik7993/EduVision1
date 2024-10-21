@@ -1,0 +1,66 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        jcenter() // JCenter is deprecated; prefer mavenCentral or Google unless absolutely necessary
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.0.2' // Ensure the Gradle version matches your environment
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.0" // Kotlin plugin version
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        jcenter() // Warning: JCenter is deprecated, consider removing if not necessary
+    }
+}
+
+// Add Java version compatibility settings to all sub-projects
+subprojects {
+    project.configurations.all {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'com.android.support'
+                && !details.requested.name.contains('multidex')) {
+                details.useVersion "28.0.0" // Use the Android support library version
+            }
+        }
+    }
+
+    // Enforce Java 17 compatibility
+    if (project.hasProperty('android')) {
+        project.android {
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+
+            // For Kotlin projects using Java 17
+            kotlinOptions {
+                jvmTarget = '17'
+            }
+        }
+    }
+}
+
+// Common build directory to prevent conflicts between projects
+rootProject.buildDir = "../build"
+
+// Make sure each subproject uses the root build directory
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+
+// Ensure tasks depend on app module evaluation
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+// Task for cleaning the entire project
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}

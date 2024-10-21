@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "73270853162",
+    "project_id": "edusignin-c3d6f",
+    "storage_bucket": "edusignin-c3d6f.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:73270853162:android:16a22059c709fe88ae0d53",
+        "android_client_info": {
+          "package_name": "com.example.eduvision_0_1"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCrXmOwED1L3l9wWXJT8ITvutfaAZazxeU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
