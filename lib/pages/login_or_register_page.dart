@@ -38,11 +38,13 @@ class _LoginOrRegisterPageState extends State<LoginOrRegisterPage> {
         },
         child: showLoginPage
             ? LoginPage(
-                key: ValueKey<bool>(showLoginPage), // Unique key for AnimatedSwitcher
+                key: ValueKey<bool>(
+                    showLoginPage), // Unique key for AnimatedSwitcher
                 onTap: togglePages, // Toggle to RegisterPage
               )
             : RegisterPage(
-                key: ValueKey<bool>(showLoginPage), // Unique key for AnimatedSwitcher
+                key: ValueKey<bool>(
+                    showLoginPage), // Unique key for AnimatedSwitcher
                 onTap: togglePages, // Toggle back to LoginPage
               ),
       ),

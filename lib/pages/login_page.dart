@@ -1,4 +1,4 @@
-// ignore_for_file: prefer_const_constructors
+// ignore_for_file: prefer_const_constructors, avoid_print
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -21,6 +21,7 @@ class _LoginPageState extends State<LoginPage> {
 
   String? errorMessage;
   bool isLoading = false;
+  bool _isPasswordVisible = false;
 
   @override
   void dispose() {
@@ -35,6 +36,19 @@ class _LoginPageState extends State<LoginPage> {
       errorMessage = null;
     });
 
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Please fill in all fields'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      setState(() {
+        isLoading = false;
+      });
+      return;
+    }
+
     try {
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
@@ -46,9 +60,12 @@ class _LoginPageState extends State<LoginPage> {
         );
       }
     } on FirebaseAuthException catch (e) {
-      setState(() {
-        errorMessage = getFirebaseErrorMessage(e.code);
-      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(getFirebaseErrorMessage(e.code)),
+          backgroundColor: Colors.red,
+        ),
+      );
     } finally {
       setState(() {
         isLoading = false;
@@ -75,26 +92,21 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       final GoogleSignIn googleSignIn = GoogleSignIn();
-
-      // Attempt Google sign-in
       final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
 
       if (googleUser == null) {
-        // If the user cancels the sign-in
         setState(() {
           isLoading = false;
         });
-        return;
+        return; // User canceled the sign-in
       }
 
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-
       final OAuthCredential credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      // Sign in with Firebase using the Google credential
       await FirebaseAuth.instance.signInWithCredential(credential);
 
       if (mounted) {
@@ -103,13 +115,19 @@ class _LoginPageState extends State<LoginPage> {
         );
       }
     } on FirebaseAuthException catch (e) {
-      setState(() {
-        errorMessage = getFirebaseErrorMessage(e.code);
-      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(getFirebaseErrorMessage(e.code)),
+          backgroundColor: Colors.red,
+        ),
+      );
     } catch (e) {
-      setState(() {
-        errorMessage = 'Failed to sign in with Google. Please try again.';
-      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to sign in with Google. Please try again.'),
+          backgroundColor: Colors.red,
+        ),
+      );
     } finally {
       setState(() {
         isLoading = false;
@@ -129,10 +147,8 @@ class _LoginPageState extends State<LoginPage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 SizedBox(height: 50),
-
                 Icon(Icons.lock, size: 100, color: Colors.black),
                 SizedBox(height: 40),
-
                 Text(
                   'Welcome Back!',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
@@ -149,6 +165,7 @@ class _LoginPageState extends State<LoginPage> {
                   controller: _emailController,
                   decoration: InputDecoration(
                     labelText: 'Email',
+                    prefixIcon: Icon(Icons.email_outlined),
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(
@@ -159,47 +176,45 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 SizedBox(height: 10),
 
-                // Password Input and "Forgot Password"
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    TextField(
-                      controller: _passwordController,
-                      obscureText: true,
-                      decoration: InputDecoration(
-                        labelText: 'Password',
-                        filled: true,
-                        fillColor: Colors.white,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                // Password Input
+                TextField(
+                  controller: _passwordController,
+                  obscureText: !_isPasswordVisible,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    prefixIcon: Icon(Icons.lock_outline),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _isPasswordVisible ? Icons.visibility_off : Icons.visibility,
                       ),
-                    ),
-                    SizedBox(height: 8),
-                    GestureDetector(
-                      onTap: () {
-                        // Add functionality for password recovery
-                        print('Forgot password pressed');
+                      onPressed: () {
+                        setState(() {
+                          _isPasswordVisible = !_isPasswordVisible;
+                        });
                       },
-                      child: Text(
-                        'Forgot Password?',
-                        style: TextStyle(
-                          color: Colors.blue,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
                     ),
-                  ],
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 8),
+                GestureDetector(
+                  onTap: () {
+                    // Add functionality for password recovery
+                    print('Forgot password pressed');
+                  },
+                  child: Text(
+                    'Forgot Password?',
+                    style: TextStyle(
+                      color: Colors.blue,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
                 SizedBox(height: 20),
-
-                // Error message display
-                if (errorMessage != null)
-                  Text(
-                    errorMessage!,
-                    style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                  ),
-                SizedBox(height: 10),
 
                 // Sign-In Button
                 GestureDetector(
@@ -215,7 +230,8 @@ class _LoginPageState extends State<LoginPage> {
                           ? CircularProgressIndicator(color: Colors.white)
                           : Text(
                               'Sign In',
-                              style: TextStyle(color: Colors.white, fontSize: 18),
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 18),
                             ),
                     ),
                   ),
@@ -230,7 +246,8 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Text('Or continue with', style: TextStyle(color: Colors.grey[700])),
+                      child: Text('Or continue with',
+                          style: TextStyle(color: Colors.grey[700])),
                     ),
                     Expanded(
                       child: Divider(thickness: 0.5, color: Colors.grey[400]),
@@ -253,7 +270,7 @@ class _LoginPageState extends State<LoginPage> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Image.asset(
-                          'lib/images/google.l.jpg',  // Corrected Google logo path
+                          'lib/images/google_L.png', // Corrected Google logo path
                           height: 24,
                         ),
                         SizedBox(width: 12),
@@ -276,12 +293,14 @@ class _LoginPageState extends State<LoginPage> {
                       onTap: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => RegisterPage(onTap: () {})),
+                          MaterialPageRoute(
+                              builder: (context) => RegisterPage(onTap: () {})),
                         );
                       },
                       child: Text(
                         'Register now',
-                        style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                            color: Colors.blue, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],

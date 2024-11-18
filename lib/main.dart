@@ -1,4 +1,4 @@
-// ignore_for_file: unused_import
+// ignore_for_file: unused_import, avoid_print
 
 import 'package:eduvision_0_1/pages/auth_page.dart';
 import 'package:firebase_core/firebase_core.dart';
