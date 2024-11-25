@@ -85,55 +85,75 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> signInWithGoogle() async {
-    setState(() {
-      isLoading = true;
-      errorMessage = null;
-    });
+  setState(() {
+    isLoading = true;
+    errorMessage = null;
+  });
 
-    try {
-      final GoogleSignIn googleSignIn = GoogleSignIn();
-      final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
+  try {
+    print("Starting Google Sign-In...");
+    final GoogleSignIn googleSignIn = GoogleSignIn();
+    final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
 
-      if (googleUser == null) {
-        setState(() {
-          isLoading = false;
-        });
-        return; // User canceled the sign-in
-      }
-
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-      final OAuthCredential credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-
-      await FirebaseAuth.instance.signInWithCredential(credential);
-
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => HomePage()),
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(getFirebaseErrorMessage(e.code)),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to sign in with Google. Please try again.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
+    if (googleUser == null) {
+      print("Google Sign-In was canceled by the user.");
       setState(() {
         isLoading = false;
       });
+      return;
     }
+
+    print("Google Sign-In successful.");
+    print("User Email: ${googleUser.email}");
+    print("User ID: ${googleUser.id}");
+
+    final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+
+    print("Access Token: ${googleAuth.accessToken}");
+    print("ID Token: ${googleAuth.idToken}");
+
+    // Create a credential for Firebase
+    final OAuthCredential credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken: googleAuth.idToken,
+    );
+
+    // Firebase Sign-In
+    UserCredential userCredential =
+        await FirebaseAuth.instance.signInWithCredential(credential);
+
+    print("Firebase Sign-In successful.");
+    print("Firebase User ID: ${userCredential.user?.uid}");
+    print("Firebase Email: ${userCredential.user?.email}");
+
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => HomePage()),
+      );
+    }
+  } on FirebaseAuthException catch (e) {
+    print("Firebase Auth Exception: ${e.code} - ${e.message}");
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Firebase Auth Error: ${e.code}'),
+        backgroundColor: Colors.red,
+      ),
+    );
+  } catch (e) {
+    print("Unknown Error: $e");
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Failed to sign in with Google. Please try again.'),
+        backgroundColor: Colors.red,
+      ),
+    );
+  } finally {
+    setState(() {
+      isLoading = false;
+    });
   }
+}
+
 
   @override
   Widget build(BuildContext context) {

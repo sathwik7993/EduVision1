@@ -3,7 +3,7 @@ plugins {
     id "kotlin-android"
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id "dev.flutter.flutter-gradle-plugin"
-    id 'com.google.gms.google-services'
+    id 'com.google.gms.google-services' // Added Google Services plugin
 }
 
 android {
@@ -34,6 +34,13 @@ android {
         release {
             // Use debug signing configuration for the release build temporarily
             signingConfig = signingConfigs.debug
+
+            // Enable R8/Proguard for release builds and optimize resources
+            minifyEnabled true
+            shrinkResources true // Optional: Removes unused resources
+
+            // Link Proguard rules
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }

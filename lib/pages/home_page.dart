@@ -1,4 +1,5 @@
 import 'package:eduvision_0_1/pages/login_page.dart';
+import 'package:eduvision_0_1/pages/account_page.dart'; // Import the AccountPage here
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'scan_page.dart';
@@ -20,8 +21,8 @@ class HomePage extends StatelessWidget {
   }
 
   void _openAccount(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Account feature coming soon!')),
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => const AccountPage()), // Navigate to AccountPage
     );
   }
 
@@ -128,7 +129,7 @@ class HomePage extends StatelessWidget {
                   _buildFeatureCard(
                     title: 'Account',
                     icon: Icons.account_circle,
-                    onTap: () => _openAccount(context),
+                    onTap: () => _openAccount(context), // Navigate to AccountPage
                   ),
                 ],
               ),

@@ -1,3 +1,5 @@
 {
-    "cmake.sourceDirectory": "C:/Users/SATHWIK.CH/Downloads/flutter_projects/eduvision_0_1/windows"
+    "cmake.sourceDirectory": "C:/Users/SATHWIK.CH/Downloads/flutter_projects/eduvision_0_1/windows",
+    "java.compile.nullAnalysis.mode": "automatic",
+    "java.configuration.updateBuildConfiguration": "interactive"
 }
