@@ -2,7 +2,7 @@
 
 Crops each hand-annotated field box from sample_images/ and decodes it the
 way the app does (digit-only for marks, optional registration mask, min-char
-confidence, 0.80 review gate). This measures the recognizer alone; alignment
+confidence, 0.90 review gate). This measures the recognizer alone; alignment
 is measured on the device (integration_test/).
 
 LOCAL ONLY. The photos contain real registration numbers: never upload them,
