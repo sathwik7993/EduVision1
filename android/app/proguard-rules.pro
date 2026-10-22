@@ -20,3 +20,19 @@
 -keep class org.tensorflow.lite.** { *; }
 -keep class org.tensorflow.lite.gpu.** { *; }
 -dontwarn org.tensorflow.lite.**
+
+# --- ONNX Runtime (on-device field recognizer) ---
+# The runtime is reached from JNI; R8 cannot see those references.
+-keep class ai.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**
+
+# --- ML Kit document scanner (Play services module) ---
+-keep class com.google.mlkit.vision.documentscanner.** { *; }
+
+
+# --- androidx.window (pulled in by the Flutter embedding) ---
+# Optional OEM extension APIs, present only on some devices. R8 reported them as
+# missing in the release build; they are looked up reflectively at runtime.
+-dontwarn androidx.window.extensions.**
+-dontwarn androidx.window.sidecar.**
+

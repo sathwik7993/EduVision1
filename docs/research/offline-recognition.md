@@ -76,3 +76,55 @@ Latency estimate (unverified): no detection pass is needed, because templates gi
 - PP-OCRv5's handwriting claim comes from the vendor. It is untested on Indian exam handwriting, so step 4 decides.
 - 1–5 samples are too few to measure accuracy. Real numbers need roughly 200 or more labeled mark crops, which step 6 collects.
 - `google_mlkit_document_scanner` depends on Play services. Keep the OpenCV fallback.
+
+## Update after implementation (2026-10-22, branch `cloud/recognition-pipeline`)
+
+What the first real sample sheets (`sample_images/`, 9 photos of one college's
+CAT answer book) changed in the plan:
+
+- **Alignment: printed-text anchors replace ORB and the OpenCV fallback.**
+  Most real photos fill the frame or cut off the left edge, so page-corner
+  detection finds nothing useful (it returns roughly the whole frame on all 9).
+  Instead, when the teacher creates a template, ML Kit (already in the app)
+  reads the printed lines on the sample ("Registered No.", "Part-A Total",
+  "GRAND TOTAL", ...), and those that occur once are stored as anchors. At scan
+  time the same lines are found again, matched by text, and a RANSAC homography
+  is fitted over their corner points (`AnchorAligner`). This works on cropped
+  photos, needs no new native library, and costs one ML Kit pass. Corner
+  detection (pure Dart, `PageAligner.detectPage`) and then the whole frame are
+  the fallbacks. `opencv_dart` was not added: it would add native libraries to
+  the APK for a fallback that the anchors make unnecessary, and pure-Dart
+  geometry is unit-testable on the host.
+- **Warp only the boxes.** Each template box is resampled straight from the
+  photo through the homography; the full page is never warped at scan time.
+- **Decode with the native decoder.** `package:image` JPEG decoding is slow in
+  Dart; `PageLoader` uses the engine's decoder (downscaled, EXIF-aware).
+- **Model: a custom CRNN-CTC (~1M params, ~3.9 MB fp32)** trained on EMNIST
+  glyphs composed into exam-style crops, including one-character-per-box
+  registration strips and digits floating in wide marks-table cells. Results
+  and the PP-OCRv5 comparison are in `docs/PROGRESS.md`.
+- **Confidence uses raw probabilities.** Decoding is restricted to the field's
+  charset, but the confidence is the model's own probability for the chosen
+  character (not renormalised over the allowed set), and is capped when a
+  disallowed character was the model's clear favourite. Constraining can pick
+  the right digit; it must not make a doubtful one look certain.
+- **Registration mask** (`D`/`A`/`X` per position, e.g. `DDADDADDXX`) both
+  repairs letter/digit swaps from the model's own per-frame second choice and
+  flags incomplete numbers ("read 2 of 10").
+- **Written totals are cross-checked, never used.** A grand-total cell or a
+  "total in words" box is read as digits and compared with Part-A + Part-B; a
+  mismatch forces review. Blank question and total cells are normal
+  (examiners often fill only the part totals) and only need review when the
+  model is unsure they are blank.
+- **Boxes outside the photo** (slip cut off) are reported as such, not read.
+
+## PP-OCRv5 comparison result (2026-10-22, session 2)
+
+`en_PP-OCRv5_mobile_rec` (converted to ONNX, 7.8 MB) against the custom CRNN
+v3 (3.9 MB) on the same synthetic held-out sets with the same charset-constrained
+decoding and 0.80 gate: PP-OCRv5 marks exact 0.85–0.97 with 0.65–2.9% silent
+errors; custom 0.98–0.996 with 0.2–0.7%. Registration numbers: 0.30–0.42 vs
+0.68. ~45 ms vs 1.4–7.6 ms per crop (desktop, one thread). The vendor's
+handwriting claim does not carry over to isolated exam digits; the custom
+model stays. These sets come from the custom model's own generator, so real
+sheets remain the deciding test (`docs/PROGRESS.md`).

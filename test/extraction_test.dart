@@ -66,6 +66,11 @@ void main() {
       expect(field.needsReview, isTrue);
     });
 
+    test('sends a 0.88 reading to review (a real sheet: "10" read as "20")', () {
+      const field = ExtractedField(value: '20', confidence: 0.88);
+      expect(field.needsReview, isTrue);
+    });
+
     test('trusts high-confidence readings', () {
       const field = ExtractedField(value: '38', confidence: 0.95);
       expect(field.needsReview, isFalse);

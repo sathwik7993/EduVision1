@@ -7,6 +7,7 @@ import '../widgets/glass.dart';
 import 'account_page.dart';
 import 'my_sheets_page.dart';
 import 'scan_page.dart';
+import 'templates_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -65,6 +66,16 @@ class _HomePageState extends State<HomePage> {
             EntranceFade(index: 1, child: _buildScanCard()),
             const SizedBox(height: AppSpacing.md),
             EntranceFade(index: 2, child: _buildStat()),
+            const SizedBox(height: AppSpacing.md),
+            EntranceFade(
+              index: 3,
+              child: _TileCard(
+                icon: Icons.grid_view_rounded,
+                title: 'Sheet templates',
+                caption: 'Field boxes per college · class roster',
+                onTap: () => _open(const TemplatesPage()),
+              ),
+            ),
             const SizedBox(height: AppSpacing.md),
             EntranceFade(
               index: 3,
