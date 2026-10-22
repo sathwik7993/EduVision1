@@ -36,7 +36,7 @@ class OrtFieldModel implements FieldModel {
   /// Versioned file name: flutter_onnxruntime caches the extracted asset by
   /// name, so shipping a retrained model under the same name would keep
   /// loading the old one.
-  static const asset = 'assets/models/field_recognizer_v1.onnx';
+  static const asset = 'assets/models/field_recognizer_v2.onnx';
 
   final OrtSession _session;
 
