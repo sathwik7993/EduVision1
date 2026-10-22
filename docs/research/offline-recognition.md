@@ -117,3 +117,14 @@ CAT answer book) changed in the plan:
   (examiners often fill only the part totals) and only need review when the
   model is unsure they are blank.
 - **Boxes outside the photo** (slip cut off) are reported as such, not read.
+
+## PP-OCRv5 comparison result (2026-10-22, session 2)
+
+`en_PP-OCRv5_mobile_rec` (converted to ONNX, 7.8 MB) against the custom CRNN
+v3 (3.9 MB) on the same synthetic held-out sets with the same charset-constrained
+decoding and 0.80 gate: PP-OCRv5 marks exact 0.85–0.97 with 0.65–2.9% silent
+errors; custom 0.98–0.996 with 0.2–0.7%. Registration numbers: 0.30–0.42 vs
+0.68. ~45 ms vs 1.4–7.6 ms per crop (desktop, one thread). The vendor's
+handwriting claim does not carry over to isolated exam digits; the custom
+model stays. These sets come from the custom model's own generator, so real
+sheets remain the deciding test (`docs/PROGRESS.md`).

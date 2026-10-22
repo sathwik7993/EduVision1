@@ -89,9 +89,14 @@ downloads go through `storage.googleapis.com` and already work). All kernels are
 | `eduvision-field-recognizer-v2` | new generator, old 150 min cap | ran a few minutes concurrently with v1, then deleted to respect one-GPU-kernel-at-a-time and the 60 min cap | < 0.3 h |
 | `eduvision-field-recognizer-v3` | new generator (comb/cell layouts, partial reg nos, stray marks, motion blur), 60 min hard cap, validation every 1000 steps with patience 4, line-buffered logs | ran 08:05–08:57 UTC; trained to the wall-clock cap (step 12296, ~1065 samples/s, best synthetic val exact 0.7467, still rising slowly: 0.59 @1k, 0.675 @3k, 0.733 @8k, 0.747 @12k). Wrote `field_recognizer.pt`, `.onnx` and `eval_sets.npz`, then **ERROR**: `onnxruntime` is not in the Kaggle image, so int8 export and `results.json` never ran. Fixed in the script (installs it at start). The fp32 model is usable; int8 + eval can run offline from it | ~51 min (T4) |
 
-PP-OCRv5 comparison (`training/ppocr_eval/`, kernel id
-`sathwikchappala/eduvision-ppocr-eval`, CPU only) has **not been pushed yet**.
-Its metadata already points at v3's output.
+v3's outputs (`.pt`, `.onnx`, `eval_sets.npz`; synthetic, no student data)
+are also a **private** dataset `sathwikchappala/eduvision-field-recognizer-v3-output`,
+because an errored kernel cannot be attached as a kernel source. v4 and the
+PP-OCR comparison attach it.
+
+PP-OCRv5 comparison (`sathwikchappala/eduvision-ppocr-eval`, CPU only):
+versions 1–3 failed in setup (no input; paddle2onnx has no Python 3.13 build;
+paddle needs setuptools); version 4 completed. Results under "Model accuracy".
 
 ### How to check and fetch v3
 
@@ -147,6 +152,24 @@ written-total cross-checks catch part of the rest). **Open decision for the
 owner:** 0.90 for marks would roughly halve silent errors at the cost of
 ~3 points more review.
 
+### PP-OCRv5 mobile rec vs custom v3 (same synthetic sets, same decoding)
+
+Converted with paddle2onnx 2.0.1, 7.8 MB. Desktop ms/crop, 1 thread, Kaggle CPU.
+
+| Set | PP-OCRv5 exact / silent | Custom v3 exact / silent | ms/crop PP-OCR / custom |
+|---|---|---|---|
+| emnist_digit | 0.974 / 0.0065 | 0.996 / 0.0020 | 45.6 / 1.4 |
+| marks_clean | 0.959 / 0.0105 | 0.996 / 0.0025 | 45.2 / 2.0 |
+| marks_exam | 0.891 / 0.0275 | 0.986 / 0.0055 | 45.3 / 2.4 |
+| marks_cell | 0.853 / 0.0290 | 0.978 / 0.0070 | 45.1 / 3.1 |
+| reg_exam | 0.421 / 0.0705 | 0.675 / 0.0790 | 47.4 / 7.3 |
+| reg_comb | 0.297 / 0.0600 | 0.677 / 0.0725 | 48.6 / 7.6 |
+
+Decision: keep the custom model (fewer silent errors on marks, higher
+accuracy, ~15–30x faster, half the size). Caveat: the sets come from the same
+generator the custom model trained on, which favours it; no real-sheet
+comparison yet.
+
 ### Real sheets, v3 (`eval_real.py`, 9 photos, 41 hand-boxed fields)
 
 A smoke test, not a statistic. Default 6% box padding: exact 25/41,
@@ -187,14 +210,9 @@ provisional labels.
    `python -I training/real_eval/eval_real.py <model.onnx> --mask DDADDADDXX`
    and record exact / auto-accepted / silent errors separately from the
    synthetic numbers.
-3. **PP-OCRv5 comparison.** `kaggle kernels push -p training/ppocr_eval`
-   (CPU; converts `PaddlePaddle/en_PP-OCRv5_mobile_rec` with paddle2onnx and
-   scores it and the custom model on v3's `eval_sets.npz` with the same
-   decoding rules). paddle2onnx does not install on local Python 3.13, hence
-   Kaggle. Choose the model by silent-error rate first, then exact accuracy,
-   then ms/crop and size; update the research doc. Also run
-   `eval_real.py` on the converted PP-OCR model only if its preprocessing is
-   ported there (it is not yet: `eval_real.py` uses the custom `prep`).
+3. **PP-OCRv5 comparison.** Done (session 2): the custom model wins on every
+   set. A real-sheet comparison would need PP-OCR's preprocessing and
+   character dictionary ported to `eval_real.py`; not done.
 4. **Release build.** Done in session 2 (sizes in the verification log).
    Re-run after the model is committed and add its size.
 5. **Device run of the benchmark.** On an emulator or phone:
