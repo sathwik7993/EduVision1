@@ -10,11 +10,11 @@ newest state is at the top of each section.
 |---|---|---|
 | 1. Template boxes + editor + local storage | Done | unit tests (JSON round-trip, store), widget build; editor not yet tried on a device |
 | 2. Deskew / alignment | Done: printed-text anchors (ML Kit) + RANSAC homography, page-corner and whole-frame fallbacks, out-of-photo detection; ML Kit document scanner for capture | unit tests on synthetic perspective photos and a left-cropped synthetic photo; corner detection run on the 9 real photos; anchors on the real photos **not yet verified on a device** |
-| 3. `OnnxSheetRecognizer` | Done (code); model training in progress on Kaggle | unit tests with stubbed model output; Python/Dart preprocessing parity test |
-| 4. Benchmark harness | Done (code): `integration_test/benchmark_test.dart`, `training/real_eval/eval_real.py`, Kaggle PP-OCRv5 comparison kernel | **not yet run on a device** (local emulator build failed: host out of memory) |
+| 3. `OnnxSheetRecognizer` | Done; ships the v4 model (`assets/models/field_recognizer_v2.onnx`, 3.9 MB) | unit tests with stubbed model output; Python/Dart preprocessing parity test; synthetic eval and local real-sheet eval (below) |
+| 4. Benchmark harness | Done: `integration_test/benchmark_test.dart`, `training/real_eval/eval_real.py`; PP-OCRv5 comparison run (custom model wins) | device benchmark **not yet run** (needs a phone/emulator) |
 | 5. Validation | Done: range per template, reg-no mask/pattern/incomplete, per-question sum, written-total cross-check, roster import + fuzzy suggestion, duplicates | unit + widget tests for sample-sheet cases (a)–(f) |
 | 6. Corrections stored as labelled crops | Done | unit test (files + JSONL index) |
-| 7. Production readiness | Partly: `flutter analyze` clean, tests pass, ProGuard rules for ONNX Runtime and androidx.window, model-load fallback to ML Kit, camera-permission denial offers the document scanner/gallery | release build verified (session 2), per-ABI sizes below; not yet run on a device |
+| 7. Production readiness | Partly: `flutter analyze` clean, 68 tests pass, ProGuard rules for ONNX Runtime and androidx.window, model-load fallback to ML Kit, camera-permission denial offers the document scanner/gallery, review gates 0.90 (marks) / 0.95 (reg nos) | release build with the model verified (session 2); **not yet run on a device** |
 
 ## What was built
 
@@ -57,6 +57,9 @@ newest state is at the top of each section.
 - Session 2 (cloud, Flutter 3.47.7 / Dart 3.13.5): `flutter analyze` no
   issues (after adding the `assets/models/.gitkeep` placeholder);
   `flutter test`: 66 tests pass.
+- Session 2, with the v4 model: release build succeeds; armeabi-v7a
+  54.7 MB, arm64-v8a 69.5 MB, x86_64 77.6 MB (model 3.87 MB inside).
+  `flutter test`: 68 pass; `flutter analyze`: no issues.
 - Session 2: `flutter build apk --release --split-per-abi` **succeeds** (R8
   fix for androidx.window confirmed), without the model asset yet:
   armeabi-v7a 51.1 MB, arm64-v8a 65.9 MB, x86_64 74.0 MB. Largest parts of
@@ -88,6 +91,8 @@ downloads go through `storage.googleapis.com` and already work). All kernels are
 | `eduvision-field-recognizer` (v1) | old generator, 15k steps, 150 min cap | stopped by the owner after ~1.5 h with empty logs (status ERROR); no output used | ~1.5 h (T4) |
 | `eduvision-field-recognizer-v2` | new generator, old 150 min cap | ran a few minutes concurrently with v1, then deleted to respect one-GPU-kernel-at-a-time and the 60 min cap | < 0.3 h |
 | `eduvision-field-recognizer-v3` | new generator (comb/cell layouts, partial reg nos, stray marks, motion blur), 60 min hard cap, validation every 1000 steps with patience 4, line-buffered logs | ran 08:05–08:57 UTC; trained to the wall-clock cap (step 12296, ~1065 samples/s, best synthetic val exact 0.7467, still rising slowly: 0.59 @1k, 0.675 @3k, 0.733 @8k, 0.747 @12k). Wrote `field_recognizer.pt`, `.onnx` and `eval_sets.npz`, then **ERROR**: `onnxruntime` is not in the Kaggle image, so int8 export and `results.json` never ran. Fixed in the script (installs it at start). The fp32 model is usable; int8 + eval can run offline from it | ~51 min (T4) |
+| `eduvision-field-recognizer-v4` | v3 generator + printed text cut off at the crop edges; fine-tuned from v3 (private dataset `eduvision-field-recognizer-v3-output`); 60 min cap | ran 09:24–10:15 UTC, COMPLETE; wall-clock cap at step 11569, best val exact 0.770 (val now includes edge clutter). Shipped | ~50 min (T4) |
+| `eduvision-ppocr-eval` (CPU) | PP-OCRv5 conversion + comparison | v1–v3 failed in setup, v4 COMPLETE | CPU only |
 
 v3's outputs (`.pt`, `.onnx`, `eval_sets.npz`; synthetic, no student data)
 are also a **private** dataset `sathwikchappala/eduvision-field-recognizer-v3-output`,
@@ -113,7 +118,41 @@ convs fp32), `field_recognizer.pt`, `eval_sets.npz`, `results.json`
 
 ## Model accuracy and size
 
-### v3 (shipped as `assets/models/field_recognizer_v1.onnx`, fp32)
+### v4 (shipped as `assets/models/field_recognizer_v2.onnx`, fp32)
+
+Fine-tuned from v3 on the same generator plus printed text cut off at the
+crop edges. fp32 3.87 MB, int8 2.66 MB (fp32 ships, as for v3).
+
+Synthetic exact / silent@0.80, v3 vs v4. "v3 sets" have no edge clutter,
+"v4 sets" do:
+
+| Set | v3 sets: v3 | v3 sets: v4 | v4 sets: v3 | v4 sets: v4 |
+|---|---|---|---|---|
+| emnist_digit | 0.996 / 0.0020 | 0.996 / 0.0020 | 0.996 / 0.0020 | 0.996 / 0.0020 |
+| marks_clean | 0.996 / 0.0025 | 0.996 / 0.0020 | 0.996 / 0.0025 | 0.996 / 0.0020 |
+| marks_exam | 0.986 / 0.0055 | 0.982 / 0.0085 | 0.729 / 0.0640 | 0.980 / 0.0095 |
+| marks_cell | 0.978 / 0.0070 | 0.975 / 0.0125 | 0.749 / 0.0640 | 0.974 / 0.0120 |
+| reg_exam | 0.674 / 0.0790 | 0.681 / 0.0805 | 0.508 / 0.0885 | 0.688 / 0.0675 |
+| reg_comb | 0.677 / 0.0725 | 0.676 / 0.0685 | 0.530 / 0.0835 | 0.671 / 0.0725 |
+
+v4 with the app's rules on v4 sets (reg nos masked; wrong length = review),
+auto-accept / silent at the shipped gates: marks_exam 0.880 / 0.0070,
+marks_cell 0.860 / 0.0090, marks_clean 0.972 / 0.0010 (0.90 gate); reg_exam
+0.235 / 0.0025, reg_comb 0.193 / 0.0025 (0.95 gate).
+
+Real sheets, v4 (app padding 6%): exact 32/41 (v3 25/41), registration 6/9
+(v3 0/9); with the box shifted 3% left or right: 33/41 and 36/41, reg 6/9
+each time (v3 fell to 0/9 reg on the left shift). Wrong fields under the
+app's rules: three "total in words" boxes and one Part-A on 12.13.31 are
+caught by the written-total cross-check; Part-A on 12.13.32 ("10" read as
+"20" at 0.88, no total in that photo) and the same misread on 12.13.31 were
+the reason for raising the mark gate to 0.90, which sends both to review.
+Three registration numbers are wrong at 0.52–0.68 and go to review.
+
+**Gates (session 2):** marks 0.90 (`ExtractedField.trustedAbove`, was
+0.80), registration numbers 0.95 (`ScanValidator.registrationTrustedAbove`).
+
+### v3 (shipped as `field_recognizer_v1.onnx` until v4 replaced it)
 
 ~0.97M parameters. fp32 ONNX 3.87 MB, int8 (LSTM/MatMul only) 2.66 MB with
 the same accuracy to within 0.3 points on every set. fp32 ships: int8 saves
@@ -147,10 +186,8 @@ Decision (session 2): registration numbers now need 0.95
 (`ScanValidator.registrationTrustedAbove`); below that they go to review
 with "Not certain enough for a registration number". A roster cannot catch a
 one-digit roll-number misread, because that is usually another real student.
-Marks keep 0.80 (silent 0.55–0.7% synthetic; the per-question sum and
-written-total cross-checks catch part of the rest). **Open decision for the
-owner:** 0.90 for marks would roughly halve silent errors at the cost of
-~3 points more review.
+Marks were kept at 0.80 at first; raised to 0.90 after the v4 real-sheet
+eval (see v4 above).
 
 ### PP-OCRv5 mobile rec vs custom v3 (same synthetic sets, same decoding)
 
@@ -196,44 +233,34 @@ provisional labels.
 
 ## Next steps (priority order)
 
-1. **Get the model in.** When v3 is COMPLETE, fetch its output (commands
-   above) and copy `field_recognizer.onnx` to
-   `assets/models/field_recognizer_v1.onnx` (the versioned name in
-   `OrtFieldModel.asset`; bump the suffix for any later retrain, because
-   flutter_onnxruntime caches the extracted asset by file name). Pick fp32 vs
-   int8 from `results.json` (accuracy and ms). Commit it. If v3 failed, read
-   `kaggle kernels logs`, fix, and push once more (keep the 60 min cap, one
-   GPU kernel at a time, record GPU minutes here).
-2. **Fill in the numbers.** Paste the synthetic metrics from `results.json`
-   into this file. Run the local real-sheet eval (never upload its inputs or
-   outputs):
-   `python -I training/real_eval/eval_real.py <model.onnx> --mask DDADDADDXX`
-   and record exact / auto-accepted / silent errors separately from the
-   synthetic numbers.
-3. **PP-OCRv5 comparison.** Done (session 2): the custom model wins on every
-   set. A real-sheet comparison would need PP-OCR's preprocessing and
-   character dictionary ported to `eval_real.py`; not done.
-4. **Release build.** Done in session 2 (sizes in the verification log).
-   Re-run after the model is committed and add its size.
-5. **Device run of the benchmark.** On an emulator or phone:
+Done in session 2: model in the app (v4), synthetic and real-sheet numbers,
+PP-OCRv5 comparison, release build with the model, review gates tightened.
+What is left needs a device or more data:
+
+1. **Device run of the benchmark.** On an emulator or phone:
    `python -I training/real_eval/export_bench.py <dir> --eval-sets eval_sets.npz`,
    `adb push <dir>/. /sdcard/Android/data/com.example.eduvision_0_1/files/bench/`,
    then `flutter test integration_test/benchmark_test.dart -d <device>`.
    It prints ONNX vs ML Kit accuracy and ms/crop per source (real vs
    synthetic sets) and the end-to-end result on the 9 photos (anchor
    alignment, per-field reads, timings), and writes `results_*.json` next to
-   the data. The local attempt failed only because the host ran out of
-   memory during the Gradle build. Verify especially: anchors found on the
-   left-cropped photos (12.13.30 PM (1), 12.13.31, 12.13.32) and the
-   screenshot (12.13.30 PM).
-6. **Latency on an entry-level phone** (the 2 s target): scan a few sheets,
+   the data. Verify especially: anchors found on the left-cropped photos
+   (12.13.30 PM (1), 12.13.31, 12.13.32) and the screenshot (12.13.30 PM).
+2. **Latency on an entry-level phone** (the 2 s target): scan a few sheets,
    read `OnnxSheetRecognizer <alignment> timings (ms)` from logcat
    (decode / align / crop / inference / total). The ML Kit anchor pass is the
    likely largest stage; if it is too slow, run it on a downscaled page.
-7. **Template editor on a device**: create the CAT template from a sample,
+3. **Template editor on a device**: create the CAT template from a sample,
    check the teal anchor boxes cover the header and the marks slip, draw
    Registered No. (mask `DDADDADDXX`), Part-A/Part-B totals (max 40/80 for
    the 40/80 exam), Grand total and Total in words as written totals.
+4. **More real sheets.** 9 photos of one layout is a smoke test. Re-run
+   `eval_real.py` on new annotated sheets (and on the labelled crops the
+   app collects) before trusting the gates; retrain (v5, bump the asset to
+   `_v3`) with real crops once there are a few hundred.
+5. **Registration numbers** still go to review most of the time (16–24%
+   auto-accepted synthetic; 6/9 read right on real sheets). A per-box
+   classifier for comb strips, or a class roster, would cut review work.
 
 ## Needs a real device or more sheets
 
