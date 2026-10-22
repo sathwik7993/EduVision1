@@ -36,6 +36,9 @@ dependencies:
   path_provider: ^2.1.6
   open_file: ^4.0.0
   share_plus: ^13.3.0
+  flutter_onnxruntime: ^1.9.0
+  google_mlkit_document_scanner: ^0.6.1
+  file_picker: ^13.1.0
 
 dev_dependencies:
   flutter_test:

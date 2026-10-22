@@ -43,7 +43,8 @@ TRUSTED_ABOVE = 0.80  # ExtractedField.trustedAbove
 # Registration-number shapes seen on Indian exam sheets. D = digit, A = letter.
 REG_SHAPES = [
     "DDADDADDDD",  # 21B01A0512
-    "DDADDADDDD",
+    "DDADDADDXX",  # 23H51A05K3: YY, college code, entry, A, branch, roll
+    "DDADDADDXX",
     "DDDDDDDDDD",
     "DDDDDDDD",
     "DDDDDDDDDDDD",
@@ -66,7 +67,11 @@ def prep(gray: np.ndarray) -> np.ndarray:
     h, w = gray.shape[:2]
     width = int(round(w * INPUT_HEIGHT / max(h, 1)))
     width = max(MIN_WIDTH, min(MAX_WIDTH, width))
-    resized = cv2.resize(gray, (width, INPUT_HEIGHT), interpolation=cv2.INTER_AREA)
+    # Area when shrinking, bilinear otherwise. Explicit, because OpenCV's
+    # INTER_AREA has its own non-bilinear rule when enlarging, which the Dart
+    # port would have to copy.
+    shrink = width <= w and INPUT_HEIGHT <= h
+    resized = cv2.resize(gray, (width, INPUT_HEIGHT), interpolation=cv2.INTER_AREA if shrink else cv2.INTER_LINEAR)
     x = 1.0 - resized.astype(np.float32) / 255.0
     lo, hi = float(x.min()), float(x.max())
     x = (x - lo) / (hi - lo + 1e-3)
@@ -142,7 +147,7 @@ def random_text(rng, kind=None) -> str:
     kind = kind or rng.choice(["mark", "reg", "free"], p=[0.45, 0.35, 0.20])
     if kind == "mark":
         r = rng.random()
-        if r < 0.03:
+        if r < 0.06:
             return ""  # empty box: absent student / no mark entered
         if r < 0.28:
             return str(rng.integers(0, 10))
@@ -153,10 +158,12 @@ def random_text(rng, kind=None) -> str:
         return str(rng.integers(100, 201))
     if kind == "reg":
         shape = REG_SHAPES[rng.integers(len(REG_SHAPES))]
-        return "".join(
-            DIGITS[rng.integers(10)] if s == "D" else CHARSET[10 + rng.integers(26)]
-            for s in shape
-        )
+        pick = {
+            "D": lambda: DIGITS[rng.integers(10)],
+            "A": lambda: CHARSET[10 + rng.integers(26)],
+            "X": lambda: CHARSET[rng.integers(36)],
+        }
+        return "".join(pick[s]() for s in shape)
     n = int(rng.integers(1, 11))
     return "".join(
         DIGITS[rng.integers(10)] if rng.random() < 0.6 else CHARSET[10 + rng.integers(26)]
@@ -231,10 +238,59 @@ def _trim(ink: np.ndarray) -> np.ndarray:
     return ink[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
 
 
-def render_field(text: str, bank: dict, rng, exam_style: bool = True) -> np.ndarray:
-    """Grayscale uint8 crop as the app would cut it from an aligned page."""
-    if not text:
+def _comb_ink(text: str, cells: int, bank: dict, rng):
+    """One character per printed box, like the 10-box Registered No. strip.
+    Returns (ink, grid); boxes past len(text) stay empty (partly filled)."""
+    cw = int(RENDER_H * rng.uniform(0.8, 1.15))
+    ch = int(RENDER_H * rng.uniform(1.0, 1.3))
+    ink = np.zeros((ch, cw * cells), np.float32)
+    grid = np.zeros_like(ink)
+    printed = rng.random() < 0.1
+    for i, c in enumerate(text):
+        if printed:
+            g = _printed_ink(c, rng)
+        else:
+            pool = bank[c]
+            g = _glyph_ink(pool[rng.integers(len(pool))], rng, ch)
+        scale = min(1.0, (cw - 4) / g.shape[1], (ch - 4) / g.shape[0])
+        if scale < 1.0:
+            g = cv2.resize(g, (max(2, int(g.shape[1] * scale)), max(2, int(g.shape[0] * scale))))
+        y = max(0, (ch - g.shape[0]) // 2 + int(rng.integers(-3, 4)))
+        x = max(0, i * cw + (cw - g.shape[1]) // 2 + int(rng.integers(-3, 4)))
+        region = ink[y : y + g.shape[0], x : x + g.shape[1]]
+        np.maximum(region, g[: region.shape[0], : region.shape[1]], out=region)
+    level, t = rng.uniform(0.4, 0.9), int(rng.integers(1, 3))
+    cv2.rectangle(grid, (0, 0), (grid.shape[1] - 1, ch - 1), level, t)
+    for i in range(1, cells):
+        cv2.line(grid, (i * cw, 0), (i * cw, ch), level, t)
+    return ink, grid
+
+
+def _stray_marks(ink: np.ndarray, rng):
+    """Dots and short ticks examiners leave in otherwise empty cells."""
+    h, w = ink.shape
+    for _ in range(int(rng.integers(1, 4))):
+        x, y = int(rng.integers(0, w)), int(rng.integers(0, h))
+        if rng.random() < 0.5:
+            cv2.circle(ink, (x, y), int(rng.integers(1, 3)), 1.0, -1)
+        else:
+            dx, dy = rng.integers(-6, 7, size=2)
+            cv2.line(ink, (x, y), (x + int(dx), y + int(dy)), 1.0, int(rng.integers(1, 3)))
+
+
+def render_field(text: str, bank: dict, rng, exam_style: bool = True, layout: str = "free", cells: int = 0) -> np.ndarray:
+    """Grayscale uint8 crop as the app would cut it from an aligned page.
+
+    layout: "free" (writing in a box or on a line), "cell" (a large marks-table
+    cell with the digits floating in it), or "comb" (one character per printed
+    box; `cells` boxes, of which the first len(text) are filled)."""
+    grid = None
+    if layout == "comb":
+        ink, grid = _comb_ink(text, max(cells, len(text), 1), bank, rng)
+    elif not text:
         ink = np.zeros((RENDER_H // 2, RENDER_H), np.float32)
+        if exam_style and rng.random() < 0.5:
+            _stray_marks(ink, rng)
     elif rng.random() < 0.15:
         ink = _printed_ink(text, rng)
     else:
@@ -245,12 +301,17 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True) -> np.ndar
         ink = np.pad(ink, pad)
         return (255 - ink * 230).clip(0, 255).astype(np.uint8)
 
-    # ROI margins: the teacher's box is never tight around the writing.
+    # ROI margins: the teacher's box is never tight around the writing. A
+    # marks-table cell can be several times wider than the digits in it.
     ih, iw = ink.shape
-    top = int(RENDER_H * rng.uniform(0.08, 0.6))
-    bottom = int(RENDER_H * rng.uniform(0.08, 0.6))
-    left = int(RENDER_H * rng.uniform(0.1, 1.2))
-    right = int(RENDER_H * rng.uniform(0.1, 1.2))
+    if layout == "comb":
+        top, bottom, left, right = (int(RENDER_H * rng.uniform(0.05, 0.4)) for _ in range(4))
+    else:
+        wide = 2.5 if layout == "cell" else 1.2
+        top = int(RENDER_H * rng.uniform(0.08, 0.8 if layout == "cell" else 0.6))
+        bottom = int(RENDER_H * rng.uniform(0.08, 0.8 if layout == "cell" else 0.6))
+        left = int(RENDER_H * rng.uniform(0.1, wide))
+        right = int(RENDER_H * rng.uniform(0.1, wide))
     h, w = ih + top + bottom, iw + left + right
     ink_full = np.zeros((h, w), np.float32)
     ink_full[top : top + ih, left : left + iw] = ink
@@ -267,7 +328,9 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True) -> np.ndar
     lines = np.zeros((h, w), np.float32)
     line_level = rng.uniform(0.35, 0.85)
     t = int(rng.integers(1, 4))
-    if rng.random() < 0.5:  # cell or box border, slightly inside the ROI
+    if grid is not None:
+        lines[top : top + ih, left : left + iw] = grid
+    elif layout == "cell" or rng.random() < 0.5:  # cell or box border, slightly inside the ROI
         j = lambda: int(rng.integers(0, max(2, RENDER_H // 6)))
         cv2.rectangle(lines, (j(), j()), (w - 1 - j(), h - 1 - j()), line_level, t)
     else:
@@ -298,6 +361,13 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True) -> np.ndar
 
     if rng.random() < 0.6:
         gray = cv2.GaussianBlur(gray, (0, 0), rng.uniform(0.3, 1.4))
+    if rng.random() < 0.15:  # hand shake during a phone capture
+        k = int(rng.integers(3, 8))
+        kernel = np.zeros((k, k), np.float32)
+        kernel[k // 2, :] = 1.0 / k
+        rot = cv2.getRotationMatrix2D(((k - 1) / 2, (k - 1) / 2), rng.uniform(0, 180), 1.0)
+        kernel = cv2.warpAffine(kernel, rot, (k, k))
+        gray = cv2.filter2D(gray, -1, kernel / max(kernel.sum(), 1e-6))
 
     gray = np.clip(gray, 0, 255).astype(np.uint8)
     # Camera resolution: a field is often only 15-40 px tall in the photo.
@@ -421,9 +491,25 @@ class FieldStream(torch.utils.data.IterableDataset):
         info = torch.utils.data.get_worker_info()
         rng = np.random.default_rng(self.seed + (info.id if info else 0) * 7919 + int(time.time()))
         while True:
-            text = random_text(rng)
-            x = prep(render_field(text, self.bank, rng, exam_style=rng.random() < 0.85))
-            yield x, text
+            gray, text = sample_field(self.bank, rng)
+            yield prep(gray), text
+
+
+def sample_field(bank, rng, kind=None, layout=None):
+    """One training/eval example: (grayscale crop, label)."""
+    text = random_text(rng, kind)
+    if layout is None:
+        if len(text) >= 6 and rng.random() < 0.45:
+            layout = "comb"
+        elif len(text) <= 3 and rng.random() < 0.4:
+            layout = "cell"
+        else:
+            layout = "free"
+    cells = len(text)
+    if layout == "comb" and rng.random() < 0.1:
+        text = text[: int(rng.integers(1, len(text)))]  # only "23" filled in
+    exam_style = layout != "free" or rng.random() < 0.85
+    return render_field(text, bank, rng, exam_style=exam_style, layout=layout, cells=cells), text
 
 
 def collate(batch):
@@ -449,8 +535,12 @@ def build_eval_sets(bank, n, seed=12345):
         digits.append(((255 - np.pad(g, 6)).astype(np.uint8), d))
     sets["emnist_digit"] = digits
     sets["marks_clean"] = [(render_field(t, bank, rng, exam_style=False), t) for t in (random_text(rng, "mark") or "0" for _ in range(n))]
-    sets["marks_exam"] = [(render_field(t, bank, rng), t) for t in (random_text(rng, "mark") for _ in range(n))]
-    sets["reg_exam"] = [(render_field(t, bank, rng), t) for t in (random_text(rng, "reg") for _ in range(n))]
+    sets["marks_exam"] = [sample_field(bank, rng, "mark", "free") for _ in range(n)]
+    # Totals floating in a wide marks-table cell, ruled lines around them.
+    sets["marks_cell"] = [sample_field(bank, rng, "mark", "cell") for _ in range(n)]
+    sets["reg_exam"] = [sample_field(bank, rng, "reg", "free") for _ in range(n)]
+    # One character per printed box; ~10% only partly filled in.
+    sets["reg_comb"] = [sample_field(bank, rng, "reg", "comb") for _ in range(n)]
     return sets
 
 
@@ -480,7 +570,7 @@ def load_eval_sets(path):
 
 
 def allowed_for(name: str) -> str:
-    return DIGITS if name in ("emnist_digit", "marks_clean", "marks_exam") else CHARSET
+    return CHARSET if name.startswith("reg") else DIGITS
 
 
 # %% [markdown]
