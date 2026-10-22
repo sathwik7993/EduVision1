@@ -16,7 +16,6 @@ import '../services/template_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass.dart';
 import 'review_page.dart';
-import 'template_editor_page.dart';
 
 enum _CameraState { initialising, ready, permissionDenied, unavailable }
 
@@ -256,20 +255,6 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
   }
 
   Future<void> _process(String imagePath) async {
-    // Without field boxes only ML Kit's printed-text reader can run: slow
-    // (three image variants) and blind to handwritten marks. Say so, and
-    // offer to set the layout up from this very photo.
-    if (!_template.hasBoxes) {
-      final choice = await _askSetUpTemplate();
-      if (!mounted || choice == null) return;
-      if (choice) {
-        await Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => TemplateEditorPage(samplePath: imagePath),
-        ));
-        await _loadEngine();
-        if (!mounted || !_template.hasBoxes) return;
-      }
-    }
     final template = _template;
     final recognizer = _recognizer;
     final ScanResult validated;
@@ -393,30 +378,6 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
         );
     }
   }
-
-  /// True: set up a template from the photo; false: read printed text only.
-  Future<bool?> _askSetUpTemplate() => showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Set up this sheet first'),
-          content: const Text(
-            'Handwritten marks are read only after you mark where the boxes '
-            'are on your college\'s sheet. It takes about two minutes, once '
-            'per layout.\n\nWithout it, only printed text is read: slower, '
-            'and marks are often wrong.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Printed text only'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Use this photo to set up'),
-            ),
-          ],
-        ),
-      );
 
   Widget _buildTopBar() {
     return SafeArea(
