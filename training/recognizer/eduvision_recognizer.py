@@ -26,6 +26,7 @@ import glob
 import json
 import math
 import os
+import sys
 import time
 
 import cv2
@@ -602,12 +603,32 @@ def evaluate_onnx(path, sets) -> dict:
     return out
 
 
+def validate(model, val, device) -> float:
+    """Exact-match accuracy on a fixed synthetic set built from *train*
+    glyphs (the EMNIST test glyphs stay untouched for the final eval)."""
+    model.eval()
+    hits = 0
+    with torch.no_grad():
+        for x, text, allowed in val:
+            probs = model(torch.from_numpy(x)[None, None].to(device))[0].cpu().numpy()
+            hits += ctc_decode(probs, allowed)[0] == text
+    model.train()
+    return hits / len(val)
+
+
 def main():
+    # Kaggle shows a script's log only as it is flushed.
+    sys.stdout.reconfigure(line_buffering=True)
+    script_start = time.time()
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="/kaggle/input")
     ap.add_argument("--out-dir", default=".")
     ap.add_argument("--steps", type=int, default=15000)
-    ap.add_argument("--max-minutes", type=float, default=150, help="safety stop for the GPU quota")
+    ap.add_argument("--max-minutes", type=float, default=60,
+                    help="hard wall-clock cap for the whole run (GPU quota); training stops early enough to export")
+    ap.add_argument("--export-minutes", type=float, default=10, help="time reserved for export + eval")
+    ap.add_argument("--val-every", type=int, default=1000)
+    ap.add_argument("--patience", type=int, default=4, help="validations without improvement before stopping")
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--workers", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--eval-n", type=int, default=2000)
@@ -627,6 +648,13 @@ def main():
 
     sets = build_eval_sets(test_bank, args.eval_n)
     save_eval_sets(sets, os.path.join(args.out_dir, "eval_sets.npz"))
+    val_rng = np.random.default_rng(999)
+    val = []
+    for i in range(100 if args.smoke else 600):
+        kind = ["mark", "reg", "free"][i % 3]
+        g, t = sample_field(train_bank, val_rng, kind)
+        val.append((prep(g), t, DIGITS if kind == "mark" else CHARSET))
+    print(f"data ready after {(time.time() - script_start) / 60:.1f} min", flush=True)
 
     model = FieldRecognizer().to(device)
     params = sum(p.numel() for p in model.parameters())
@@ -641,6 +669,8 @@ def main():
 
     model.train()
     start, step = time.time(), 0
+    deadline = script_start + (args.max_minutes - args.export_minutes) * 60
+    best_acc, best_state, stale, stop_reason = -1.0, None, 0, "steps"
     for xs, lengths, targets, target_lengths in loader:
         xs = xs.to(device, non_blocking=True)
         logits = model.train_logits(xs, lengths)
@@ -655,12 +685,26 @@ def main():
         if step % 500 == 0 or step == args.steps or args.smoke and step % 50 == 0:
             rate = step * args.batch / (time.time() - start)
             print(f"step {step} loss {loss.item():.4f} samples/s {rate:.0f}", flush=True)
+        if step % args.val_every == 0 or step >= args.steps:
+            acc = validate(model, val, device)
+            print(f"step {step} val_exact {acc:.4f}", flush=True)
+            if acc > best_acc:
+                best_acc, stale = acc, 0
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            else:
+                stale += 1
+                if stale >= args.patience:
+                    stop_reason = "early stop (no val improvement)"
+                    break
         if step >= args.steps:
             break
-        if time.time() - start > args.max_minutes * 60:
-            print("stopping early: time budget", flush=True)
+        if time.time() > deadline:
+            stop_reason = "wall-clock cap"
             break
     train_minutes = (time.time() - start) / 60
+    print(f"training stopped: {stop_reason} at step {step}, best val {best_acc:.4f}", flush=True)
+    if best_state is not None:
+        model.load_state_dict(best_state)
 
     model.eval().cpu()
     torch.save(model.state_dict(), os.path.join(args.out_dir, "field_recognizer.pt"))
@@ -684,6 +728,9 @@ def main():
     results = {
         "params": params,
         "steps": step,
+        "stop_reason": stop_reason,
+        "best_val_exact": round(best_acc, 4),
+        "total_minutes": round((time.time() - script_start) / 60, 1),
         "batch": args.batch,
         "train_minutes": round(train_minutes, 1),
         "smoke": args.smoke,

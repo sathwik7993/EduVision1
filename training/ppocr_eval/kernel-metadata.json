@@ -10,6 +10,6 @@
   "enable_internet": true,
   "dataset_sources": [],
   "competition_sources": [],
-  "kernel_sources": ["sathwikchappala/eduvision-field-recognizer"],
+  "kernel_sources": ["sathwikchappala/eduvision-field-recognizer-v3"],
   "model_sources": []
 }
