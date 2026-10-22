@@ -5,6 +5,7 @@ import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:image/image.dart' as img;
 
 import '../../models/scan_result.dart';
+import 'anchor_aligner.dart';
 import 'crop_preprocessor.dart';
 import 'ctc_decoder.dart';
 import 'page_aligner.dart';
@@ -86,21 +87,26 @@ class FieldCrop {
   final Uint8List png;
 }
 
+/// How a photo was registered onto the template, best first.
+enum PageAlignment { anchors, pageCorners, none }
+
 /// Reads handwritten fields from template boxes with the on-device model.
 ///
-/// Pipeline: native decode -> page corner detection -> per-box perspective
+/// Pipeline: native decode -> registration onto the template (printed-text
+/// anchors, else page corners, else the whole frame) -> per-box perspective
 /// sampling -> CRNN -> charset-constrained CTC decode. Confidence is the
 /// minimum per-character probability, so one doubtful digit sends the field
 /// to review.
 class OnnxSheetRecognizer implements SheetRecognizer {
-  OnnxSheetRecognizer(this._model);
+  OnnxSheetRecognizer(this._model, [this._lines]);
 
   /// Throws if the model asset is missing or the runtime cannot load it; the
   /// caller falls back to ML Kit.
   static Future<OnnxSheetRecognizer> load() async =>
-      OnnxSheetRecognizer(await OrtFieldModel.load());
+      OnnxSheetRecognizer(await OrtFieldModel.load(), MlKitLineReader());
 
   final FieldModel _model;
+  final TextLineReader? _lines;
 
   @override
   String get displayName => 'On-device handwriting model';
@@ -109,7 +115,10 @@ class OnnxSheetRecognizer implements SheetRecognizer {
   bool get supportsHandwriting => true;
 
   @override
-  Future<void> dispose() => _model.close();
+  Future<void> dispose() async {
+    await _model.close();
+    await _lines?.close();
+  }
 
   @override
   Future<ScanResult> recognize(
@@ -119,50 +128,90 @@ class OnnxSheetRecognizer implements SheetRecognizer {
     if (!template.hasBoxes) {
       throw StateError('Template "${template.name}" has no field boxes.');
     }
-    final total = Stopwatch()..start();
+    final clock = Stopwatch()..start();
+    final timings = <String, int>{};
+    var last = 0;
+    void lap(String stage) {
+      timings[stage] = clock.elapsedMilliseconds - last;
+      last = clock.elapsedMilliseconds;
+    }
 
     final page = await PageLoader.load(imagePath);
-    final decodeMs = total.elapsedMilliseconds;
+    lap('decode');
+
+    final (homography, alignment) = await locatePage(page, template, _lines);
+    lap('align');
 
     final fields = template.fields;
-    final crops = await Isolate.run(() => extractCrops(page, fields));
-    final alignMs = total.elapsedMilliseconds - decodeMs;
+    final crops =
+        await Isolate.run(() => extractCrops(page, homography, fields));
+    lap('crop');
 
     final readings = <(FieldCrop, CtcReading)>[];
     for (final crop in crops) {
       final out = await _model.run(crop.input);
-      final allowed = crop.field.kind == FieldKind.registration
-          ? fieldModelCharset
-          : digitCharset;
-      readings.add((
-        crop,
-        CtcDecoder.decode(out.probs, out.frames, out.classes, allowed: allowed),
-      ));
+      readings.add((crop, read(out, crop.field, template)));
     }
-    final inferMs = total.elapsedMilliseconds - decodeMs - alignMs;
+    lap('inference');
+    timings['fields'] = crops.length;
+    timings['total'] = clock.elapsedMilliseconds;
 
-    final timings = {
-      'decode': decodeMs,
-      'align+crop': alignMs,
-      'inference': inferMs,
-      'fields': crops.length,
-      'total': total.elapsedMilliseconds,
-    };
-    debugPrint('OnnxSheetRecognizer timings (ms): $timings');
-    return assemble(readings, imagePath: imagePath, timingsMs: timings);
+    debugPrint('OnnxSheetRecognizer ${alignment.name} timings (ms): $timings');
+    return assemble(
+      readings,
+      imagePath: imagePath,
+      timingsMs: timings,
+      alignment: alignment,
+    );
   }
 
-  /// Runs in a background isolate: page detection and crop sampling are the
-  /// only CPU-heavy Dart work in the pipeline.
+  /// Registers [page] onto the template's page space.
+  static Future<(PageHomography, PageAlignment)> locatePage(
+    GrayImage page,
+    SheetTemplate template,
+    TextLineReader? lines,
+  ) async {
+    if (lines != null && template.anchors.isNotEmpty) {
+      try {
+        final hits = await lines.read(page);
+        final h = AnchorAligner.align(template.anchors, hits);
+        if (h != null) return (h, PageAlignment.anchors);
+      } on Exception catch (e) {
+        debugPrint('Anchor alignment failed: $e');
+      }
+    }
+    final corners = await Isolate.run(() => PageAligner.detectPage(page));
+    if (corners != null) {
+      return (PageHomography.fromCorners(corners), PageAlignment.pageCorners);
+    }
+    return (
+      PageHomography.identity(page.width, page.height),
+      PageAlignment.none,
+    );
+  }
+
+  /// Decodes one crop with the charset its field allows.
+  static CtcReading read(
+    FieldModelOutput out,
+    TemplateField field,
+    SheetTemplate template,
+  ) {
+    if (field.kind != FieldKind.registration) {
+      return CtcDecoder.decode(out.probs, out.frames, out.classes,
+          allowed: digitCharset);
+    }
+    final mask = template.registrationMask;
+    return mask == null || mask.isEmpty
+        ? CtcDecoder.decode(out.probs, out.frames, out.classes)
+        : CtcDecoder.decodeMasked(out.probs, out.frames, out.classes, mask);
+  }
+
+  /// Runs in a background isolate: crop sampling is the CPU-heavy Dart work.
   static List<FieldCrop> extractCrops(
     GrayImage page,
+    PageHomography homography,
     List<TemplateField> fields,
   ) {
-    final corners = PageAligner.detectPage(page);
-    final homography = corners == null
-        ? PageHomography.identity(page.width, page.height)
-        : PageHomography.fromCorners(corners);
-
     return [
       for (final field in fields)
         () {
@@ -185,13 +234,14 @@ class OnnxSheetRecognizer implements SheetRecognizer {
   }
 
   /// Maps per-box readings onto a [ScanResult]. A part total with no box of
-  /// its own is the sum of that part's question boxes, and is only as
-  /// confident as the least confident question.
+  /// its own is the sum of that part's question boxes (blank cells count as
+  /// 0), and is only as confident as the least confident question.
   @visibleForTesting
   static ScanResult assemble(
     List<(FieldCrop, CtcReading)> readings, {
     String? imagePath,
     Map<String, int> timingsMs = const {},
+    PageAlignment alignment = PageAlignment.none,
   }) {
     ExtractedField toField(FieldCrop crop, CtcReading r) {
       var value = r.text;
@@ -213,32 +263,34 @@ class OnnxSheetRecognizer implements SheetRecognizer {
       return null;
     }
 
-    final questions = [
-      for (final (crop, r) in readings)
-        if (crop.field.kind == FieldKind.question)
-          QuestionMark(
-            label: crop.field.label.isEmpty ? 'Q' : crop.field.label,
-            part: crop.field.part,
-            maxMarks: crop.field.maxMarks,
-            field: toField(crop, r),
-          ),
-    ];
+    List<LabelledMark> marks(FieldKind kind, String fallback) => [
+          for (final (crop, r) in readings)
+            if (crop.field.kind == kind)
+              LabelledMark(
+                label: crop.field.label.isEmpty ? fallback : crop.field.label,
+                part: kind == FieldKind.question ? crop.field.part : '',
+                maxMarks: crop.field.maxMarks,
+                field: toField(crop, r),
+              ),
+        ];
+    final questions = marks(FieldKind.question, 'Q');
+    final written = marks(FieldKind.writtenTotal, 'Grand total');
 
     ExtractedField partTotal(FieldKind kind, String part) {
       final boxed = single(kind);
       if (boxed != null) return boxed;
       final qs = questions.where((q) => q.part == part).toList();
       if (qs.isEmpty) return const ExtractedField.empty();
-      final unreadable = qs.any((q) => q.field.isEmpty);
+      final allBlank = qs.every((q) => q.field.isEmpty);
       return ExtractedField(
-        value: unreadable ? '' : '${qs.fold(0, (s, q) => s + q.value)}',
+        value: allBlank ? '' : '${qs.fold(0, (s, q) => s + q.value)}',
         confidence:
             qs.map((q) => q.field.confidence).reduce((a, b) => a < b ? a : b),
         rawText: 'Sum of ${qs.map((q) => q.label).join(' + ')}',
       );
     }
 
-    final raw = StringBuffer();
+    final raw = StringBuffer('Alignment: ${alignment.name}\n');
     for (final (crop, r) in readings) {
       raw.writeln('${crop.field.title}: "${r.text}" '
           '(${(r.confidence * 100).round()}%)');
@@ -246,11 +298,12 @@ class OnnxSheetRecognizer implements SheetRecognizer {
     if (timingsMs.isNotEmpty) raw.writeln('Timings (ms): $timingsMs');
 
     return ScanResult(
-      registrationNo: single(FieldKind.registration) ??
-          const ExtractedField.empty(),
+      registrationNo:
+          single(FieldKind.registration) ?? const ExtractedField.empty(),
       partA: partTotal(FieldKind.partA, 'A'),
       partB: partTotal(FieldKind.partB, 'B'),
       questions: questions,
+      writtenTotals: written,
       imagePath: imagePath,
       rawText: raw.toString().trim(),
       timingsMs: timingsMs,

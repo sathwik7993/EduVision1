@@ -5,6 +5,7 @@ import 'dart:ui';
 
 import 'package:eduvision_0_1/models/scan_result.dart';
 import 'package:eduvision_0_1/models/sheet_template.dart';
+import 'package:eduvision_0_1/services/recognition/anchor_aligner.dart';
 import 'package:eduvision_0_1/services/recognition/crop_preprocessor.dart';
 import 'package:eduvision_0_1/services/recognition/ctc_decoder.dart';
 import 'package:eduvision_0_1/services/recognition/onnx_recognizer.dart';
@@ -140,6 +141,33 @@ void main() {
       expect(CtcDecoder.decode(probs, 1, 37).text, 'S');
       final digits = CtcDecoder.decode(probs, 1, 37, allowed: digitCharset);
       expect(digits.text, '5');
+      // ...but the model's doubt survives into the confidence.
+      expect(digits.confidence, lessThan(0.5));
+    });
+
+    test('a registration mask repairs a letter/digit swap from the frames',
+        () {
+      // Model reads "2B" but position 2 must be a digit; "8" (class 9) is
+      // its second choice on those frames.
+      final probs = frames([
+        {3: 0.9},
+        {0: 0.9},
+        {12: 0.6, 9: 0.3},
+      ]);
+      expect(CtcDecoder.decode(probs, 3, 37).text, '2B');
+      final masked = CtcDecoder.decodeMasked(probs, 3, 37, 'DD');
+      expect(masked.text, '28');
+      // The repaired character is less certain, so review is forced.
+      expect(masked.confidence, lessThan(0.8));
+    });
+
+    test('a mask leaves an incomplete number alone for validation', () {
+      final probs = frames([
+        {3: 0.9},
+        {0: 0.9},
+        {4: 0.9},
+      ]);
+      expect(CtcDecoder.decodeMasked(probs, 3, 37, 'DDADDADDXX').text, '23');
     });
 
     test('an empty box decodes to empty text', () {
@@ -199,6 +227,7 @@ void main() {
           PageHomography.fromCorners(found),
           box,
           width: 64,
+          height: 40,
         );
       }
 
@@ -212,6 +241,88 @@ void main() {
 
       // And the crop really contains the ink: its centre is dark.
       expect(a.at(a.width ~/ 2, a.height ~/ 2), lessThan(100));
+    });
+  });
+
+  group('AnchorAligner', () {
+    // A photo cropped on the left (page x<0 is outside the frame) and seen
+    // in slight perspective: corner detection cannot work here.
+    final truth = PageHomography.fromCorners(const [
+      Offset(-120, 30), Offset(900, 10), Offset(940, 1350), Offset(-90, 1380)]);
+
+    TextLineHit hit(String text, Rect r, [PageHomography? h]) {
+      final m = h ?? truth;
+      return TextLineHit(text, [
+        m.map(r.left, r.top),
+        m.map(r.right, r.top),
+        m.map(r.right, r.bottom),
+        m.map(r.left, r.bottom),
+      ]);
+    }
+
+    const labels = {
+      'continuous assessment test answer book': Rect.fromLTRB(0.25, 0.16, 0.8, 0.18),
+      'registered no': Rect.fromLTRB(0.45, 0.19, 0.58, 0.21),
+      'to be filled in by the examiner only': Rect.fromLTRB(0.35, 0.65, 0.65, 0.67),
+      'part-a total': Rect.fromLTRB(0.82, 0.72, 0.93, 0.74),
+      'part-b total': Rect.fromLTRB(0.82, 0.78, 0.93, 0.80),
+      'grand total': Rect.fromLTRB(0.70, 0.86, 0.78, 0.89),
+      'signature of the examiner with date': Rect.fromLTRB(0.62, 0.95, 0.94, 0.97),
+    };
+
+    test('picks unique printed lines as anchors', () {
+      final sample = [
+        for (final e in labels.entries)
+          TextLineHit(e.key, [
+            Offset(e.value.left * 1000, e.value.top * 1400),
+            Offset(e.value.right * 1000, e.value.top * 1400),
+            Offset(e.value.right * 1000, e.value.bottom * 1400),
+            Offset(e.value.left * 1000, e.value.bottom * 1400),
+          ]),
+        const TextLineHit('2 3 H 5', [Offset.zero, Offset(1, 0), Offset(1, 1), Offset(0, 1)]),
+        const TextLineHit('Marks', [Offset.zero, Offset(1, 0), Offset(1, 1), Offset(0, 1)]),
+        const TextLineHit('Marks', [Offset.zero, Offset(1, 0), Offset(1, 1), Offset(0, 1)]),
+      ];
+      final anchors = AnchorAligner.pickAnchors(sample, 1000, 1400);
+      expect(anchors.map((a) => a.text), unorderedEquals(labels.keys));
+      expect(anchors.first.corners.first.dx, closeTo(0.25, 1e-9));
+    });
+
+    test('registers a left-cropped photo and ignores a wrong match', () {
+      final anchors = [
+        for (final e in labels.entries)
+          TemplateAnchor(e.key, [
+            e.value.topLeft, e.value.topRight,
+            e.value.bottomRight, e.value.bottomLeft,
+          ]),
+      ];
+      final photo = [
+        for (final e in labels.entries)
+          if (e.key != 'registered no') hit(e.key, e.value),
+        // OCR found "registered no" somewhere else entirely.
+        hit('registered no', const Rect.fromLTRB(0.1, 0.5, 0.2, 0.52)),
+        hit('booklet number', const Rect.fromLTRB(0.05, 0.02, 0.3, 0.04)),
+      ];
+      final h = AnchorAligner.align(anchors, photo)!;
+      for (final p in const [Offset(0.88, 0.75), Offset(0.6, 0.2), Offset(0.1, 0.9)]) {
+        expect((h.map(p.dx, p.dy) - truth.map(p.dx, p.dy)).distance,
+            lessThan(3), reason: '$p');
+      }
+    });
+
+    test('gives up when anchors cover only a strip of the page', () {
+      final strip = labels.entries.where((e) => e.value.top > 0.6).toList();
+      final anchors = [
+        for (final e in strip)
+          TemplateAnchor(e.key, [
+            e.value.topLeft, e.value.topRight,
+            e.value.bottomRight, e.value.bottomLeft,
+          ]),
+      ];
+      expect(
+        AnchorAligner.align(anchors, [for (final e in strip) hit(e.key, e.value)]),
+        isNull,
+      );
     });
   });
 
@@ -254,13 +365,30 @@ void main() {
       expect(result.questions, hasLength(3));
     });
 
-    test('an unreadable question makes the derived total unreadable', () {
+    test('a blank question cell counts as 0 in the derived total', () {
       final result = OnnxSheetRecognizer.assemble([
         (crop(FieldKind.question, label: 'Q1'), const CtcReading('4', 0.97)),
         (crop(FieldKind.question, label: 'Q2'), const CtcReading('', 0.9)),
       ]);
+      expect(result.partA.value, '4');
+      // A confidently blank cell is normal and does not need review.
+      expect(result.questions[1].needsReview, isFalse);
+    });
+
+    test('an all-blank part has no derived total', () {
+      final result = OnnxSheetRecognizer.assemble([
+        (crop(FieldKind.question, label: 'Q1'), const CtcReading('', 0.97)),
+        (crop(FieldKind.question, label: 'Q2'), const CtcReading('', 0.9)),
+      ]);
       expect(result.partA.isEmpty, isTrue);
       expect(result.partA.needsReview, isTrue);
+    });
+
+    test('a doubtful blank cell still goes to review', () {
+      final result = OnnxSheetRecognizer.assemble([
+        (crop(FieldKind.writtenTotal), const CtcReading('', 0.4)),
+      ]);
+      expect(result.writtenTotals.single.needsReview, isTrue);
     });
   });
 

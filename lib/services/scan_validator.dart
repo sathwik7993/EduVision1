@@ -34,9 +34,11 @@ abstract final class ScanValidator {
           if (questions[i].part == part) i,
       ];
       final total = part == 'A' ? partA : partB;
+      // All cells blank is the common "examiner filled only the totals" case.
+      // Otherwise a blank cell is an unattempted question and counts as 0.
       if (qs.isEmpty ||
           total.isEmpty ||
-          qs.any((i) => questions[i].field.isEmpty)) {
+          qs.every((i) => questions[i].field.isEmpty)) {
         continue;
       }
       final sum = qs.fold(0, (s, i) => s + questions[i].value);
@@ -54,7 +56,24 @@ abstract final class ScanValidator {
       }
     }
 
+    // A total the examiner wrote must agree with Part-A + Part-B. The
+    // workbook always gets the derived sum; a disagreement means a mark (or
+    // the examiner's arithmetic) is wrong, and the teacher must look.
+    final derived = (int.tryParse(partA.value) ?? 0) +
+        (int.tryParse(partB.value) ?? 0);
+    final written = [
+      for (final w in result.writtenTotals)
+        w.field.isEmpty || int.tryParse(w.field.value) == derived
+            ? w
+            : w.withField(_flag(
+                w.field,
+                '${w.label} reads ${w.field.value}, but Part-A + Part-B '
+                '= $derived',
+              )),
+    ];
+
     return result.copyWith(
+      writtenTotals: written,
       registrationNo: _checkRegistration(
         result.registrationNo,
         template,
@@ -89,13 +108,21 @@ abstract final class ScanValidator {
     final issues = <String>[];
     String? suggestion;
 
-    final pattern = template.registrationPattern ??
-        SheetTemplate.defaultRegistrationPattern;
-    final length = template.registrationLength;
-    if (!pattern.hasMatch(reg)) {
-      issues.add('Does not match the registration number format');
-    } else if (length != null && reg.length != length) {
+    final mask = template.registrationMask;
+    final length = template.registrationLength ??
+        (mask == null || mask.isEmpty ? null : mask.length);
+    if (length != null && reg.length < length) {
+      issues.add('Incomplete: read ${reg.length} of $length characters');
+    } else if (length != null && reg.length > length) {
       issues.add('Expected $length characters, read ${reg.length}');
+    } else if (mask != null && mask.isNotEmpty && !_matchesMask(reg, mask)) {
+      issues.add('Does not match the format $mask');
+    } else if (mask == null || mask.isEmpty) {
+      final pattern = template.registrationPattern ??
+          SheetTemplate.defaultRegistrationPattern;
+      if (!pattern.hasMatch(reg)) {
+        issues.add('Does not match the registration number format');
+      }
     }
 
     if (!roster.isEmpty && !roster.contains(reg)) {
@@ -111,6 +138,19 @@ abstract final class ScanValidator {
 
     if (issues.isEmpty) return field;
     return _flag(field, issues.join('; '), suggestion: suggestion);
+  }
+
+  /// D digit, A letter, X either.
+  static bool _matchesMask(String reg, String mask) {
+    for (var i = 0; i < mask.length; i++) {
+      final isDigit = RegExp(r'\d').hasMatch(reg[i]);
+      switch (mask[i].toUpperCase()) {
+        case 'D' when !isDigit:
+        case 'A' when isDigit:
+          return false;
+      }
+    }
+    return true;
   }
 
   static String? _overMax(ExtractedField field, int? max) {

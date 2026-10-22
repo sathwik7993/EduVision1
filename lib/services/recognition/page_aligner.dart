@@ -88,6 +88,71 @@ class PageHomography {
         Offset(0, height.toDouble()),
       ]);
 
+  /// Least-squares fit from point pairs (normalised page -> image pixels),
+  /// at least 4 pairs. Returns null when the system is degenerate.
+  static PageHomography? fit(List<Offset> page, List<Offset> image) {
+    // Image coordinates are scaled to ~1 for a well-conditioned system.
+    var s = 1.0;
+    for (final p in image) {
+      s = math.max(s, math.max(p.dx.abs(), p.dy.abs()));
+    }
+    final ata = List.generate(8, (_) => List<double>.filled(8, 0));
+    final atb = List<double>.filled(8, 0);
+    void add(List<double> row, double r) {
+      for (var i = 0; i < 8; i++) {
+        atb[i] += row[i] * r;
+        for (var j = 0; j < 8; j++) {
+          ata[i][j] += row[i] * row[j];
+        }
+      }
+    }
+
+    for (var k = 0; k < page.length; k++) {
+      final u = page[k].dx, v = page[k].dy;
+      final x = image[k].dx / s, y = image[k].dy / s;
+      add([u, v, 1, 0, 0, 0, -u * x, -v * x], x);
+      add([0, 0, 0, u, v, 1, -u * y, -v * y], y);
+    }
+    final p = _solve(ata, atb);
+    if (p == null) return null;
+    return PageHomography._(p[0] * s, p[1] * s, p[2] * s, p[3] * s, p[4] * s,
+        p[5] * s, p[6], p[7]);
+  }
+
+  /// Gaussian elimination with partial pivoting.
+  static List<double>? _solve(List<List<double>> a, List<double> b) {
+    final n = b.length;
+    for (var c = 0; c < n; c++) {
+      var pivot = c;
+      for (var r = c + 1; r < n; r++) {
+        if (a[r][c].abs() > a[pivot][c].abs()) pivot = r;
+      }
+      if (a[pivot][c].abs() < 1e-12) return null;
+      final row = a[c];
+      a[c] = a[pivot];
+      a[pivot] = row;
+      final rhs = b[c];
+      b[c] = b[pivot];
+      b[pivot] = rhs;
+      for (var r = c + 1; r < n; r++) {
+        final f = a[r][c] / a[c][c];
+        for (var k = c; k < n; k++) {
+          a[r][k] -= f * a[c][k];
+        }
+        b[r] -= f * b[c];
+      }
+    }
+    final x = List<double>.filled(n, 0);
+    for (var r = n - 1; r >= 0; r--) {
+      var acc = b[r];
+      for (var k = r + 1; k < n; k++) {
+        acc -= a[r][k] * x[k];
+      }
+      x[r] = acc / a[r][r];
+    }
+    return x;
+  }
+
   final double _a, _b, _c, _d, _e, _f, _g, _h;
 
   Offset map(double u, double v) {
@@ -210,18 +275,18 @@ abstract final class PageAligner {
     Rect box, {
     int maxHeight = 96,
     int? width,
+    int? height,
   }) {
     final tl = page.map(box.left, box.top);
     final tr = page.map(box.right, box.top);
     final bl = page.map(box.left, box.bottom);
     final br = page.map(box.right, box.bottom);
-    var outW = width ?? (((tr - tl).distance + (br - bl).distance) / 2).round();
-    var outH = width != null
-        ? (outW * (((bl - tl).distance + (br - tr).distance) /
-                    ((tr - tl).distance + (br - bl).distance)))
-            .round()
-        : (((bl - tl).distance + (br - tr).distance) / 2).round();
-    if (width == null && outH > maxHeight) {
+    final naturalW = ((tr - tl).distance + (br - bl).distance) / 2;
+    final naturalH = ((bl - tl).distance + (br - tr).distance) / 2;
+    var outW = width ?? naturalW.round();
+    var outH = height ??
+        (width != null ? (width * naturalH / naturalW).round() : naturalH.round());
+    if (width == null && height == null && outH > maxHeight) {
       outW = (outW * maxHeight / outH).round();
       outH = maxHeight;
     }

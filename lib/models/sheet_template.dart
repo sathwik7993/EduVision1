@@ -5,7 +5,11 @@ enum FieldKind {
   registration('Registration No'),
   partA('Part-A total'),
   partB('Part-B total'),
-  question('Question mark');
+  question('Question mark'),
+
+  /// A total the examiner wrote (grand-total cell, "total in words" line).
+  /// Never used as the total -- only cross-checked against Part-A + Part-B.
+  writtenTotal('Written grand total');
 
   const FieldKind(this.label);
   final String label;
@@ -37,9 +41,12 @@ class TemplateField {
   final int? maxMarks;
 
   /// Short display name for lists and review rows.
-  String get title => kind == FieldKind.question
-      ? '${label.isEmpty ? 'Question' : label} (Part-$part)'
-      : kind.label;
+  String get title => switch (kind) {
+        FieldKind.question =>
+          '${label.isEmpty ? 'Question' : label} (Part-$part)',
+        FieldKind.writtenTotal when label.isNotEmpty => label,
+        _ => kind.label,
+      };
 
   Map<String, Object?> toJson() => {
         'kind': kind.name,
@@ -66,6 +73,34 @@ class TemplateField {
   }
 }
 
+/// A line of printed text on the sample sheet ("Part-A Total", "GRAND
+/// TOTAL"), used to register later photos onto the template.
+///
+/// Printed labels are what ML Kit reads reliably, and matching them by content
+/// works even when a photo cuts off the page edges, which defeats corner
+/// detection.
+class TemplateAnchor {
+  const TemplateAnchor(this.text, this.corners);
+
+  /// Normalised with TextNormalizer.normalizeLabel.
+  final String text;
+
+  /// TL, TR, BR, BL in normalised page coordinates.
+  final List<Offset> corners;
+
+  Map<String, Object?> toJson() => {
+        'text': text,
+        'corners': [for (final c in corners) ...[c.dx, c.dy]],
+      };
+
+  factory TemplateAnchor.fromJson(Map<String, Object?> json) {
+    final c = (json['corners']! as List).cast<num>();
+    return TemplateAnchor(json['text']! as String, [
+      for (var i = 0; i < 8; i += 2) Offset(c[i].toDouble(), c[i + 1].toDouble()),
+    ]);
+  }
+}
+
 /// Describes the exam sheet being scanned.
 ///
 /// Extraction quality depends far more on knowing what to expect than on the
@@ -82,6 +117,9 @@ class SheetTemplate {
     this.id = 'default',
     this.name = 'Default',
     this.fields = const [],
+    this.anchors = const [],
+    this.sampleImagePath,
+    this.registrationMask,
     this.registrationLabels = const [
       'registered no',
       'registration no',
@@ -119,6 +157,16 @@ class SheetTemplate {
   final String id;
   final String name;
   final List<TemplateField> fields;
+  final List<TemplateAnchor> anchors;
+
+  /// The deskewed sample sheet the boxes were drawn on (app storage).
+  final String? sampleImagePath;
+
+  /// Character class per position of the registration number: D digit,
+  /// A letter, X either -- e.g. "DDADDADDXX" for 23H51A66K1. Lets the decoder
+  /// repair a letter read where a digit must be (and vice versa) from the
+  /// model's own second choice, and flags an incomplete number.
+  final String? registrationMask;
 
   final List<String> registrationLabels;
   final List<String> partALabels;
@@ -156,6 +204,9 @@ class SheetTemplate {
       id: id ?? this.id,
       name: name ?? this.name,
       fields: fields ?? this.fields,
+      anchors: anchors,
+      sampleImagePath: sampleImagePath,
+      registrationMask: registrationMask,
       registrationLabels: registrationLabels,
       partALabels: partALabels,
       partBLabels: partBLabels,
@@ -172,6 +223,9 @@ class SheetTemplate {
         'id': id,
         'name': name,
         'fields': fields.map((f) => f.toJson()).toList(),
+        'anchors': anchors.map((a) => a.toJson()).toList(),
+        'sampleImagePath': sampleImagePath,
+        'registrationMask': registrationMask,
         'partAMax': partAMax,
         'partBMax': partBMax,
         'registrationLength': registrationLength,
@@ -186,6 +240,11 @@ class SheetTemplate {
       fields: ((json['fields'] as List?) ?? const [])
           .map((f) => TemplateField.fromJson((f as Map).cast<String, Object?>()))
           .toList(),
+      anchors: ((json['anchors'] as List?) ?? const [])
+          .map((a) => TemplateAnchor.fromJson((a as Map).cast<String, Object?>()))
+          .toList(),
+      sampleImagePath: json['sampleImagePath'] as String?,
+      registrationMask: json['registrationMask'] as String?,
       partAMax: (json['partAMax'] as num?)?.toInt() ?? 40,
       partBMax: (json['partBMax'] as num?)?.toInt() ?? 60,
       registrationLength: (json['registrationLength'] as num?)?.toInt(),

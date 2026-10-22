@@ -95,11 +95,18 @@ def score(preds, labels):
 
 
 def ctc_decode(probs, class_chars, allowed):
-    """class_chars[i] is the character of class i (class 0 = blank)."""
+    """Same rule as the app: greedy CTC over the allowed classes, confidence =
+    min raw per-character probability, capped by the strongest dropped
+    disallowed class. class_chars[i] is the character of class i (0 = blank)."""
     keep = [0] + [i for i, c in enumerate(class_chars) if i > 0 and c in allowed]
     p = probs[:, keep]
-    p = p / np.maximum(p.sum(axis=1, keepdims=True), 1e-9)
     best = p.argmax(axis=1)
+    best_p = p[np.arange(len(p)), best]
+    other = probs.copy()
+    other[:, keep] = 0
+    other[:, 0] = 0
+    over = other.max(axis=1) if len(p) else np.zeros(0)
+    dropped = float(over[over > best_p].max()) if (over > best_p).any() else 0.0
     text, confs, prev = [], [], 0
     for t, k in enumerate(best):
         if k != prev and k != 0:
@@ -109,8 +116,8 @@ def ctc_decode(probs, class_chars, allowed):
             confs[-1] = max(confs[-1], p[t, k])
         prev = k
     if not text:
-        return "", float(p[:, 0].min()) if len(p) else 0.0
-    return "".join(text), float(min(confs))
+        return "", min(float(p[:, 0].min()), 1 - dropped) if len(p) else 0.0
+    return "".join(text), min(float(min(confs)), 1 - dropped)
 
 
 def run(sess, sets, preprocess, class_chars):

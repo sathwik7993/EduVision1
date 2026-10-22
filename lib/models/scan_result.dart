@@ -80,9 +80,10 @@ class ExtractedField {
   }
 }
 
-/// One per-question mark read from a template box.
-class QuestionMark {
-  const QuestionMark({
+/// A labelled number read from a template box: a per-question mark, or a
+/// total the examiner wrote on the sheet.
+class LabelledMark {
+  const LabelledMark({
     required this.label,
     required this.part,
     required this.field,
@@ -91,14 +92,21 @@ class QuestionMark {
 
   final String label;
 
-  /// 'A' or 'B'.
+  /// 'A' or 'B' for a question; empty for a written total.
   final String part;
   final int? maxMarks;
   final ExtractedField field;
 
   int get value => int.tryParse(field.value.trim()) ?? 0;
 
-  QuestionMark withField(ExtractedField field) => QuestionMark(
+  /// Unlike the main fields, a blank cell is normal here: examiners often
+  /// fill only the totals. Blank is accepted when the model is confident the
+  /// cell is blank; a doubtful blank (a faint digit?) still goes to review.
+  bool get needsReview =>
+      !field.edited &&
+      (field.issue != null || field.confidence < ExtractedField.trustedAbove);
+
+  LabelledMark withField(ExtractedField field) => LabelledMark(
         label: label,
         part: part,
         maxMarks: maxMarks,
@@ -113,6 +121,7 @@ class ScanResult {
     required this.partA,
     required this.partB,
     this.questions = const [],
+    this.writtenTotals = const [],
     this.imagePath,
     this.rawText = '',
     this.timingsMs = const {},
@@ -123,6 +132,7 @@ class ScanResult {
         partA = const ExtractedField.empty(),
         partB = const ExtractedField.empty(),
         questions = const [],
+        writtenTotals = const [],
         imagePath = null,
         rawText = '',
         timingsMs = const {};
@@ -133,7 +143,11 @@ class ScanResult {
 
   /// Per-question marks, when the template has question boxes. Used to
   /// cross-check the part totals.
-  final List<QuestionMark> questions;
+  final List<LabelledMark> questions;
+
+  /// Totals the examiner wrote (grand-total cell, total in words). Only
+  /// ever compared with [total]; a mismatch forces review.
+  final List<LabelledMark> writtenTotals;
   final String? imagePath;
 
   /// Full OCR dump, shown behind a "what the scanner read" disclosure so a
@@ -156,28 +170,30 @@ class ScanResult {
       !registrationNo.needsReview &&
       !partA.needsReview &&
       !partB.needsReview &&
-      !questions.any((q) => q.field.needsReview) &&
+      ![...questions, ...writtenTotals].any((q) => q.needsReview) &&
       registrationNo.value.trim().isNotEmpty;
 
   List<String> get fieldsNeedingReview => [
         if (registrationNo.needsReview) 'Registration No',
         if (partA.needsReview) 'Part-A',
         if (partB.needsReview) 'Part-B',
-        for (final q in questions)
-          if (q.field.needsReview) q.label,
+        for (final q in [...questions, ...writtenTotals])
+          if (q.needsReview) q.label,
       ];
 
   ScanResult copyWith({
     ExtractedField? registrationNo,
     ExtractedField? partA,
     ExtractedField? partB,
-    List<QuestionMark>? questions,
+    List<LabelledMark>? questions,
+    List<LabelledMark>? writtenTotals,
   }) {
     return ScanResult(
       registrationNo: registrationNo ?? this.registrationNo,
       partA: partA ?? this.partA,
       partB: partB ?? this.partB,
       questions: questions ?? this.questions,
+      writtenTotals: writtenTotals ?? this.writtenTotals,
       imagePath: imagePath,
       rawText: rawText,
       timingsMs: timingsMs,

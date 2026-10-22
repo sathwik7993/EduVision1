@@ -431,12 +431,19 @@ class FieldRecognizer(nn.Module):
 # %%
 def ctc_decode(probs: np.ndarray, allowed: str = CHARSET):
     """Greedy CTC over the allowed charset. Confidence = minimum per-character
-    probability, the same rule the app uses to gate review."""
+    raw probability (not renormalised over the allowed set), capped by the
+    strongest dropped disallowed character -- the same rule
+    lib/services/recognition/ctc_decoder.dart uses to gate review."""
     keep = [0] + [CHARSET.index(c) + 1 for c in allowed]
     p = probs[:, keep]
-    p = p / np.maximum(p.sum(axis=1, keepdims=True), 1e-9)
     best = p.argmax(axis=1)
-    text, confs, prev, run = [], [], 0, 0.0
+    best_p = p[np.arange(len(p)), best]
+    other = probs.copy()
+    other[:, keep] = 0
+    other[:, 0] = 0
+    over = other.max(axis=1) if len(p) else np.zeros(0)
+    dropped = float(over[over > best_p].max()) if (over > best_p).any() else 0.0
+    text, confs, prev = [], [], 0
     for t, k in enumerate(best):
         if k != prev and k != 0:
             text.append(allowed[k - 1])
@@ -446,8 +453,8 @@ def ctc_decode(probs: np.ndarray, allowed: str = CHARSET):
         prev = k
     if not text:
         # An empty read is only as trustworthy as the blank frames.
-        return "", float(p[:, 0].min()) if len(p) else 0.0
-    return "".join(text), float(min(confs))
+        return "", min(float(p[:, 0].min()), 1 - dropped) if len(p) else 0.0
+    return "".join(text), min(float(min(confs)), 1 - dropped)
 
 
 def _cer(a: str, b: str) -> int:
