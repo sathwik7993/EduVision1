@@ -14,7 +14,7 @@ newest state is at the top of each section.
 | 4. Benchmark harness | Done (code): `integration_test/benchmark_test.dart`, `training/real_eval/eval_real.py`, Kaggle PP-OCRv5 comparison kernel | **not yet run on a device** (local emulator build failed: host out of memory) |
 | 5. Validation | Done: range per template, reg-no mask/pattern/incomplete, per-question sum, written-total cross-check, roster import + fuzzy suggestion, duplicates | unit + widget tests for sample-sheet cases (a)–(f) |
 | 6. Corrections stored as labelled crops | Done | unit test (files + JSONL index) |
-| 7. Production readiness | Partly: `flutter analyze` clean, tests pass, ProGuard rule for ONNX Runtime, model-load fallback to ML Kit | release APK build and size check pending (host memory) |
+| 7. Production readiness | Partly: `flutter analyze` clean, tests pass, ProGuard rules for ONNX Runtime and androidx.window, model-load fallback to ML Kit, camera-permission denial offers the document scanner/gallery | release build failed once in R8 (missing androidx.window classes); fix added, rebuild and APK size **not yet verified** |
 
 ## What was built
 
@@ -74,16 +74,43 @@ environment; the CLI authenticates through `~/.kaggle/kaggle.json`
 |---|---|---|---|
 | `eduvision-field-recognizer` (v1) | old generator, 15k steps, 150 min cap | stopped by the owner after ~1.5 h with empty logs (status ERROR); no output used | ~1.5 h (T4) |
 | `eduvision-field-recognizer-v2` | new generator, old 150 min cap | ran a few minutes concurrently with v1, then deleted to respect one-GPU-kernel-at-a-time and the 60 min cap | < 0.3 h |
-| `eduvision-field-recognizer-v3` | new generator (comb/cell layouts, partial reg nos, stray marks, motion blur), 60 min hard cap, validation every 1000 steps with patience 4, line-buffered logs | pushed 07:35 UTC, running | pending |
+| `eduvision-field-recognizer-v3` | new generator (comb/cell layouts, partial reg nos, stray marks, motion blur), 60 min hard cap, validation every 1000 steps with patience 4, line-buffered logs | pushed 07:35 UTC; **QUEUED** when this session ended (handover) | ≤ 60 min when it runs |
 
-PP-OCRv5 comparison (`eduvision-ppocr-eval`, CPU only) runs after v3, on v3's
-held-out sets.
+PP-OCRv5 comparison (`training/ppocr_eval/`, kernel id
+`sathwikchappala/eduvision-ppocr-eval`, CPU only) has **not been pushed yet**.
+Its metadata already points at v3's output.
+
+### How to check and fetch v3
+
+```
+kaggle kernels status sathwikchappala/eduvision-field-recognizer-v3
+kaggle kernels logs   sathwikchappala/eduvision-field-recognizer-v3
+kaggle kernels output sathwikchappala/eduvision-field-recognizer-v3 -p <dir>
+```
+
+Output files: `field_recognizer.onnx` (fp32, input `input` [1,1,32,W] ->
+output `probs` [1,T,37]), `field_recognizer.int8.onnx` (LSTM/MatMul int8,
+convs fp32), `field_recognizer.pt`, `eval_sets.npz`, `results.json`
+(synthetic held-out metrics, size, stop reason, minutes).
 
 ## Model accuracy and size
 
-Pending v3. Everything below the line will be filled from `results.json`
-(synthetic held-out sets from EMNIST **test** glyphs) and from the real-sheet
-eval (9 photos, 41 hand-boxed fields; a smoke test, not a statistic).
+**No trained model yet; no accuracy numbers exist.** Size of the architecture
+(from the smoke export): ~0.97M parameters, fp32 ONNX 3.9 MB, int8
+(LSTM/MatMul only) 2.7 MB. In the smoke test fully int8 ONNX (convs too) was
+~15x slower on desktop CPU, so convs stay fp32. Desktop single-thread time per
+crop was 1–5 ms for the smoke model (not a phone number).
+
+When v3 finishes, report from `results.json` per set (`emnist_digit`,
+`marks_clean`, `marks_exam`, `marks_cell`, `reg_exam`, `reg_comb`; all
+**synthetic**, from EMNIST *test* glyphs): exact accuracy, CER,
+auto-accept rate, silent-error rate (wrong but above the 0.80 gate), and
+accuracy when accepted. Report the real-sheet eval separately (9 photos, 41
+hand-boxed fields; a smoke test, not a statistic).
+
+`assets/models/` is declared in `pubspec.yaml` but the model is **not
+committed yet**, so a clean checkout will not build until step 1 below is
+done.
 
 ## Real sample sheets (local only)
 
@@ -95,6 +122,55 @@ provisional labels.
 - Page-corner detection on all 9 photos returns (almost) the whole frame:
   the sheet fills the frame or is cut off. This is why alignment uses printed
   anchors first.
+
+## Next steps (priority order)
+
+1. **Get the model in.** When v3 is COMPLETE, fetch its output (commands
+   above) and copy `field_recognizer.onnx` to
+   `assets/models/field_recognizer_v1.onnx` (the versioned name in
+   `OrtFieldModel.asset`; bump the suffix for any later retrain, because
+   flutter_onnxruntime caches the extracted asset by file name). Pick fp32 vs
+   int8 from `results.json` (accuracy and ms). Commit it. If v3 failed, read
+   `kaggle kernels logs`, fix, and push once more (keep the 60 min cap, one
+   GPU kernel at a time, record GPU minutes here).
+2. **Fill in the numbers.** Paste the synthetic metrics from `results.json`
+   into this file. Run the local real-sheet eval (never upload its inputs or
+   outputs):
+   `python -I training/real_eval/eval_real.py <model.onnx> --mask DDADDADDXX`
+   and record exact / auto-accepted / silent errors separately from the
+   synthetic numbers.
+3. **PP-OCRv5 comparison.** `kaggle kernels push -p training/ppocr_eval`
+   (CPU; converts `PaddlePaddle/en_PP-OCRv5_mobile_rec` with paddle2onnx and
+   scores it and the custom model on v3's `eval_sets.npz` with the same
+   decoding rules). paddle2onnx does not install on local Python 3.13, hence
+   Kaggle. Choose the model by silent-error rate first, then exact accuracy,
+   then ms/crop and size; update the research doc. Also run
+   `eval_real.py` on the converted PP-OCR model only if its preprocessing is
+   ported there (it is not yet: `eval_real.py` uses the custom `prep`).
+4. **Release build.** `flutter build apk --release --split-per-abi`. The last
+   attempt failed in R8 on missing `androidx.window.extensions/sidecar`
+   classes; `-dontwarn` rules for them were added to
+   `android/app/proguard-rules.pro` but the build has **not been re-run**.
+   Record per-ABI APK sizes here (`build/app/outputs/flutter-apk/`).
+5. **Device run of the benchmark.** On an emulator or phone:
+   `python -I training/real_eval/export_bench.py <dir> --eval-sets eval_sets.npz`,
+   `adb push <dir>/. /sdcard/Android/data/com.example.eduvision_0_1/files/bench/`,
+   then `flutter test integration_test/benchmark_test.dart -d <device>`.
+   It prints ONNX vs ML Kit accuracy and ms/crop per source (real vs
+   synthetic sets) and the end-to-end result on the 9 photos (anchor
+   alignment, per-field reads, timings), and writes `results_*.json` next to
+   the data. The local attempt failed only because the host ran out of
+   memory during the Gradle build. Verify especially: anchors found on the
+   left-cropped photos (12.13.30 PM (1), 12.13.31, 12.13.32) and the
+   screenshot (12.13.30 PM).
+6. **Latency on an entry-level phone** (the 2 s target): scan a few sheets,
+   read `OnnxSheetRecognizer <alignment> timings (ms)` from logcat
+   (decode / align / crop / inference / total). The ML Kit anchor pass is the
+   likely largest stage; if it is too slow, run it on a downscaled page.
+7. **Template editor on a device**: create the CAT template from a sample,
+   check the teal anchor boxes cover the header and the marks slip, draw
+   Registered No. (mask `DDADDADDXX`), Part-A/Part-B totals (max 40/80 for
+   the 40/80 exam), Grand total and Total in words as written totals.
 
 ## Needs a real device or more sheets
 

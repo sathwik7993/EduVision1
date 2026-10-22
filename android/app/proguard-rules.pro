@@ -29,3 +29,10 @@
 # --- ML Kit document scanner (Play services module) ---
 -keep class com.google.mlkit.vision.documentscanner.** { *; }
 
+
+# --- androidx.window (pulled in by the Flutter embedding) ---
+# Optional OEM extension APIs, present only on some devices. R8 reported them as
+# missing in the release build; they are looked up reflectively at runtime.
+-dontwarn androidx.window.extensions.**
+-dontwarn androidx.window.sidecar.**
+
