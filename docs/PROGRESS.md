@@ -14,7 +14,7 @@ newest state is at the top of each section.
 | 4. Benchmark harness | Done (code): `integration_test/benchmark_test.dart`, `training/real_eval/eval_real.py`, Kaggle PP-OCRv5 comparison kernel | **not yet run on a device** (local emulator build failed: host out of memory) |
 | 5. Validation | Done: range per template, reg-no mask/pattern/incomplete, per-question sum, written-total cross-check, roster import + fuzzy suggestion, duplicates | unit + widget tests for sample-sheet cases (a)–(f) |
 | 6. Corrections stored as labelled crops | Done | unit test (files + JSONL index) |
-| 7. Production readiness | Partly: `flutter analyze` clean, tests pass, ProGuard rules for ONNX Runtime and androidx.window, model-load fallback to ML Kit, camera-permission denial offers the document scanner/gallery | release build failed once in R8 (missing androidx.window classes); fix added, rebuild and APK size **not yet verified** |
+| 7. Production readiness | Partly: `flutter analyze` clean, tests pass, ProGuard rules for ONNX Runtime and androidx.window, model-load fallback to ML Kit, camera-permission denial offers the document scanner/gallery | release build verified (session 2), per-ABI sizes below; not yet run on a device |
 
 ## What was built
 
@@ -56,8 +56,15 @@ newest state is at the top of each section.
 
 - Session 2 (cloud, Flutter 3.47.7 / Dart 3.13.5): `flutter analyze` no
   issues (after adding the `assets/models/.gitkeep` placeholder);
-  `flutter test`: 66 tests pass. `flutter build apk` not possible here: the
-  session's network policy blocks `dl.google.com` (Android SDK).
+  `flutter test`: 66 tests pass.
+- Session 2: `flutter build apk --release --split-per-abi` **succeeds** (R8
+  fix for androidx.window confirmed), without the model asset yet:
+  armeabi-v7a 51.1 MB, arm64-v8a 65.9 MB, x86_64 74.0 MB. Largest parts of
+  arm64 (uncompressed): `libonnxruntime.so` 28.6 MB, `libflutter.so` 11.7 MB,
+  `libmlkit_google_ocr_pipeline.so` 11.1 MB, Dart code 8.1 MB. In the cloud
+  sandbox Maven Central answered 429 to Gradle's parallel downloads; a local
+  `~/.gradle/init.d` mirror (Google's Maven Central mirror) plus Gradle's
+  429 retry worked around it. Nothing in the repo depends on that.
 - `flutter analyze`: no issues (last run after the benchmark harness commit).
 - `flutter test`: 65 tests pass (`test/extraction_test.dart`,
   `recognition_pipeline_test.dart`, `validation_test.dart`,
@@ -153,11 +160,8 @@ provisional labels.
    then ms/crop and size; update the research doc. Also run
    `eval_real.py` on the converted PP-OCR model only if its preprocessing is
    ported there (it is not yet: `eval_real.py` uses the custom `prep`).
-4. **Release build.** `flutter build apk --release --split-per-abi`. The last
-   attempt failed in R8 on missing `androidx.window.extensions/sidecar`
-   classes; `-dontwarn` rules for them were added to
-   `android/app/proguard-rules.pro` but the build has **not been re-run**.
-   Record per-ABI APK sizes here (`build/app/outputs/flutter-apk/`).
+4. **Release build.** Done in session 2 (sizes in the verification log).
+   Re-run after the model is committed and add its size.
 5. **Device run of the benchmark.** On an emulator or phone:
    `python -I training/real_eval/export_bench.py <dir> --eval-sets eval_sets.npz`,
    `adb push <dir>/. /sdcard/Android/data/com.example.eduvision_0_1/files/bench/`,
