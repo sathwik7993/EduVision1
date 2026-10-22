@@ -1,0 +1,62 @@
+{
+  "_note": "Hand-drawn field boxes (pixels, x0 y0 x1 y1) for the local real-sheet eval in training/real_eval/eval_real.py. Labels follow README.md (owner's provisional reading); \"\" = blank cell. A field missing from a photo (cropped off) is omitted. Local use only: never upload.",
+  "WhatsApp Image 2026-10-22 at 12.13.28 PM.jpeg": {
+    "registration": [[580, 275, 977, 320], "23H51A66K1"],
+    "partA": [[836, 1097, 968, 1157], ""],
+    "partB": [[836, 1187, 968, 1245], ""],
+    "grandTotal": [[834, 1247, 968, 1325], ""],
+    "totalInWords": [[260, 1290, 700, 1325], ""]
+  },
+  "WhatsApp Image 2026-10-22 at 12.13.29 PM.jpeg": {
+    "registration": [[720, 305, 1155, 355], "23H53A66D9"],
+    "partA": [[1010, 1190, 1157, 1257], "40"],
+    "partB": [[1010, 1292, 1157, 1357], "80"],
+    "grandTotal": [[1008, 1358, 1160, 1445], ""],
+    "totalInWords": [[340, 1395, 860, 1442], "30"]
+  },
+  "WhatsApp Image 2026-10-22 at 12.13.29 PM (1).jpeg": {
+    "registration": [[705, 333, 1130, 383], "23H53A66D9"],
+    "partA": [[988, 1198, 1133, 1263], "40"],
+    "partB": [[988, 1298, 1133, 1363], "80"],
+    "grandTotal": [[986, 1365, 1133, 1450], ""],
+    "totalInWords": [[335, 1400, 850, 1448], "30"]
+  },
+  "WhatsApp Image 2026-10-22 at 12.13.30 PM.jpeg": {
+    "registration": [[430, 395, 700, 425], "23H53A66D9"],
+    "partA": [[612, 948, 705, 995], "40"],
+    "partB": [[612, 1018, 705, 1060], "80"],
+    "grandTotal": [[607, 1062, 705, 1125], ""],
+    "totalInWords": [[150, 1110, 470, 1145], "30"]
+  },
+  "WhatsApp Image 2026-10-22 at 12.13.30 PM (1).jpeg": {
+    "registration": [[497, 195, 810, 228], "23H53A66D9"],
+    "partA": [[702, 838, 808, 890], "40"],
+    "partB": [[702, 908, 808, 960], "80"],
+    "grandTotal": [[702, 962, 808, 1040], ""],
+    "totalInWords": [[150, 1025, 560, 1060], "30"]
+  },
+  "WhatsApp Image 2026-10-22 at 12.13.31 PM.jpeg": {
+    "registration": [[312, 228, 656, 268], "23H51A66D9"],
+    "partA": [[525, 940, 645, 995], "10"],
+    "partB": [[525, 1018, 645, 1078], "20"],
+    "grandTotal": [[523, 1078, 645, 1148], "30"]
+  },
+  "WhatsApp Image 2026-10-22 at 12.13.32 PM.jpeg": {
+    "registration": [[197, 300, 636, 345], "23H51A66D9"],
+    "partA": [[480, 1190, 626, 1248], "10"]
+  },
+  "WhatsApp Image 2026-10-22 at 12.13.33 PM.jpeg": {
+    "registration": [[695, 290, 1128, 340], "23H51A66D9"],
+    "partA": [[962, 1183, 1110, 1250], "10"],
+    "partB": [[962, 1285, 1110, 1350], "20"],
+    "grandTotal": [[958, 1352, 1110, 1440], "30"],
+    "totalInWords": [[285, 1400, 810, 1445], ""]
+  },
+  "WhatsApp Image 2026-10-22 at 12.13.34 PM.jpeg": {
+    "registration": [[690, 290, 1133, 335], "23"],
+    "partA": [[967, 1185, 1118, 1250], ""],
+    "partB": [[967, 1288, 1118, 1355], ""],
+    "grandTotal": [[963, 1357, 1118, 1447], ""],
+    "totalInWords": [[285, 1405, 810, 1445], ""]
+  }
+}
