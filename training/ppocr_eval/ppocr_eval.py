@@ -195,7 +195,6 @@ results = {
     "ppocr_size_bytes": os.path.getsize("en_PP-OCRv5_mobile_rec.onnx"),
     "ppocr": run(session("en_PP-OCRv5_mobile_rec.onnx"), sets, ppocr_prep, ppocr_chars),
     "custom_fp32": run(session(find("field_recognizer.onnx")), sets, custom_prep, custom_chars),
-    "custom_int8": run(session(find("field_recognizer.int8.onnx")), sets, custom_prep, custom_chars),
 }
 with open("comparison.json", "w") as f:
     json.dump(results, f, indent=2)
