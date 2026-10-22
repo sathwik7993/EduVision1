@@ -14,10 +14,13 @@ import '../widgets/glass.dart';
 
 /// Draw the field boxes for one sheet layout, once, on a sample sheet.
 class TemplateEditorPage extends StatefulWidget {
-  const TemplateEditorPage({super.key, this.template});
+  const TemplateEditorPage({super.key, this.template, this.samplePath});
 
   /// Null to create a new template.
   final SheetTemplate? template;
+
+  /// A photo to start a new template from, e.g. the sheet just scanned.
+  final String? samplePath;
 
   @override
   State<TemplateEditorPage> createState() => _TemplateEditorPageState();
@@ -48,6 +51,9 @@ class _TemplateEditorPageState extends State<TemplateEditorPage> {
   void initState() {
     super.initState();
     _readImageSize();
+    if (widget.samplePath case final path?) {
+      _pickSample(() async => path);
+    }
   }
 
   @override
