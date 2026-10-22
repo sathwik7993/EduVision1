@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Eduvision 0 1</string>
+	<string>EduVision</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -41,6 +41,14 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Required on iOS: accessing the camera or photo library without a usage
+	     description terminates the app immediately. These were missing entirely. -->
+	<key>NSCameraUsageDescription</key>
+	<string>EduVision uses the camera to scan exam sheets and read the marks on them.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>EduVision needs access to your photos so you can import a picture of an exam sheet.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>EduVision saves scanned exam sheet images to your photo library.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

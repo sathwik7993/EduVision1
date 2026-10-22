@@ -1,31 +1,55 @@
 name: eduvision_0_1
-description: "A new Flutter project."
+description: "Scan handwritten exam sheets and export marks to a spreadsheet."
 publish_to: 'none'
 version: 0.1.0
 
 environment:
-  sdk: ^3.5.3
+  sdk: ^3.9.0
 
 dependencies:
   flutter:
     sdk: flutter
-  firebase_core: ^3.6.0  # Downgrade firebase_core to a compatible version
-  firebase_auth: ^5.3.1 
-  google_sign_in: ^6.0.1
-  google_ml_kit: ^0.19.0
-  image_picker: ^1.1.2
-  camera: ^0.10.0+3
-  permission_handler: ^11.0.0
-  google_mlkit_text_recognition: ^0.14.0
-  image: ^3.0.1
-  excel: ^2.0.5
-  path_provider: ^2.0.13
-  open_file: ^3.2.1
-  
+
+  # Auth
+  firebase_core: ^4.13.0
+  firebase_auth: ^6.5.7
+  google_sign_in: ^7.2.0
+
+  # Capture + recognition.
+  # NOTE: the `google_ml_kit` meta-package was removed. It pulls in every ML Kit
+  # model (barcode, face, pose, translation, ...) and added tens of MB to the
+  # APK; only Latin text recognition is actually used.
+  camera: ^0.12.0
+  image_picker: ^1.2.3
+  google_mlkit_text_recognition: ^0.16.0
+  # Held at 4.3.x: excel 4.x pins archive ^3.6.1 / xml <7, while image >=4.5.2
+  # requires archive ^4. Everything used here (grayscale, adjustColor, copyCrop,
+  # copyRotate, encodeJpg) exists in 4.3.
+  image: ^4.3.0
+  # Held at 12.x: permission_handler 13 compiles against Android SDK 37, which
+  # is not yet published to the stable SDK channel. Move to ^13 once
+  # `sdkmanager --list` offers platforms;android-37.
+  permission_handler: ^12.0.1
+
+  # Spreadsheet output
+  excel: ^4.0.6
+  path_provider: ^2.1.6
+  open_file: ^4.0.0
+  share_plus: ^13.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "lib/images/eduicon.png"
+  min_sdk_android: 23
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "lib/images/eduicon.png"
 
 flutter:
   uses-material-design: true

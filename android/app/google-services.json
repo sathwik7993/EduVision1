@@ -2,7 +2,7 @@
   "project_info": {
     "project_number": "73270853162",
     "project_id": "edusignin-c3d6f",
-    "storage_bucket": "edusignin-c3d6f.appspot.com"
+    "storage_bucket": "edusignin-c3d6f.firebasestorage.app"
   },
   "client": [
     {
@@ -12,7 +12,20 @@
           "package_name": "com.example.eduvision_0_1"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "73270853162-4a2ciu7tjrl5fc4fem2ti699i663mctj.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.eduvision_0_1",
+            "certificate_hash": "09bca48a1b9ccf7c087a54a2fb4305fb8c07aa21"
+          }
+        },
+        {
+          "client_id": "73270853162-13dnlf8sg4n5d8n7gnh1neqn77k9niqg.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCrXmOwED1L3l9wWXJT8ITvutfaAZazxeU"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "73270853162-13dnlf8sg4n5d8n7gnh1neqn77k9niqg.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "73270853162-7jagjv0umbju4oa816qp3jf5hn9uahiu.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.eduvision01"
+              }
+            }
+          ]
         }
       }
     }

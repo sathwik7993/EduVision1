@@ -46,7 +46,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '73270853162',
     projectId: 'edusignin-c3d6f',
     authDomain: 'edusignin-c3d6f.firebaseapp.com',
-    storageBucket: 'edusignin-c3d6f.appspot.com',
+    storageBucket: 'edusignin-c3d6f.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
@@ -54,7 +54,7 @@ class DefaultFirebaseOptions {
     appId: '1:73270853162:android:16a22059c709fe88ae0d53',
     messagingSenderId: '73270853162',
     projectId: 'edusignin-c3d6f',
-    storageBucket: 'edusignin-c3d6f.appspot.com',
+    storageBucket: 'edusignin-c3d6f.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
@@ -62,7 +62,7 @@ class DefaultFirebaseOptions {
     appId: '1:73270853162:ios:79f9076edf93f497ae0d53',
     messagingSenderId: '73270853162',
     projectId: 'edusignin-c3d6f',
-    storageBucket: 'edusignin-c3d6f.appspot.com',
+    storageBucket: 'edusignin-c3d6f.firebasestorage.app',
     iosBundleId: 'com.example.eduvision01',
   );
 
@@ -71,7 +71,7 @@ class DefaultFirebaseOptions {
     appId: '1:73270853162:ios:79f9076edf93f497ae0d53',
     messagingSenderId: '73270853162',
     projectId: 'edusignin-c3d6f',
-    storageBucket: 'edusignin-c3d6f.appspot.com',
+    storageBucket: 'edusignin-c3d6f.firebasestorage.app',
     iosBundleId: 'com.example.eduvision01',
   );
 
@@ -81,6 +81,6 @@ class DefaultFirebaseOptions {
     messagingSenderId: '73270853162',
     projectId: 'edusignin-c3d6f',
     authDomain: 'edusignin-c3d6f.firebaseapp.com',
-    storageBucket: 'edusignin-c3d6f.appspot.com',
+    storageBucket: 'edusignin-c3d6f.firebasestorage.app',
   );
 }

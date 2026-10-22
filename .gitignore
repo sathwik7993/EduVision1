@@ -26,6 +26,7 @@ render.experimental.xml
 # Keystore files
 *.jks
 *.keystore
+android/key.properties
 
 # Google Services (e.g. APIs or Firebase)
 google-services.json
@@ -77,3 +78,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 >>>>>>> e6494f4 (initial commit)
+
+# Local secrets
+.env

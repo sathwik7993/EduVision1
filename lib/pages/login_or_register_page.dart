@@ -1,9 +1,13 @@
-// ignore_for_file: prefer_const_constructors
-
-import 'package:eduvision_0_1/pages/login_page.dart';
-import 'package:eduvision_0_1/pages/register_page.dart'; // Import RegisterPage here
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+import 'login_page.dart';
+import 'register_page.dart';
+
+/// Owns the login/register toggle.
+///
+/// Previously each page also pushed the other onto the navigator, so the two
+/// mechanisms fought and the back stack grew a new page on every switch.
 class LoginOrRegisterPage extends StatefulWidget {
   const LoginOrRegisterPage({super.key});
 
@@ -12,42 +16,29 @@ class LoginOrRegisterPage extends StatefulWidget {
 }
 
 class _LoginOrRegisterPageState extends State<LoginOrRegisterPage> {
-  // Initially show the login page
-  bool showLoginPage = true;
+  bool _showLogin = true;
 
-  // Toggle between login and register page
-  void togglePages() {
-    setState(() {
-      showLoginPage = !showLoginPage;
-    });
-  }
+  void _toggle() => setState(() => _showLogin = !_showLogin);
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: AnimatedSwitcher(
-        duration: Duration(milliseconds: 300), // Smooth animation
-        transitionBuilder: (Widget child, Animation<double> animation) {
-          return SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(1, 0), // Slide in from right
-              end: Offset.zero,
-            ).animate(animation),
-            child: child,
-          );
-        },
-        child: showLoginPage
-            ? LoginPage(
-                key: ValueKey<bool>(
-                    showLoginPage), // Unique key for AnimatedSwitcher
-                onTap: togglePages, // Toggle to RegisterPage
-              )
-            : RegisterPage(
-                key: ValueKey<bool>(
-                    showLoginPage), // Unique key for AnimatedSwitcher
-                onTap: togglePages, // Toggle back to LoginPage
-              ),
+    return AnimatedSwitcher(
+      duration: AppMotion.normal,
+      switchInCurve: AppMotion.curve,
+      switchOutCurve: AppMotion.curve,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween(
+            begin: const Offset(0.06, 0),
+            end: Offset.zero,
+          ).animate(animation),
+          child: child,
+        ),
       ),
+      child: _showLogin
+          ? LoginPage(key: const ValueKey('login'), onTap: _toggle)
+          : RegisterPage(key: const ValueKey('register'), onTap: _toggle),
     );
   }
 }

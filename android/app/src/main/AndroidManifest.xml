@@ -1,22 +1,30 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.eduvision_0_1">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Camera and internet permissions -->
+    <!--
+      The package="..." attribute was removed: it is deprecated and an error under
+      AGP 8. The application id now comes solely from `namespace` in build.gradle.
+    -->
+
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-feature android:name="android.hardware.camera" />
 
-    <!-- Permissions for external storage access -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- Camera is strongly preferred but not required, so the app stays installable
+         on devices without one (results can still be reviewed and exported). -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
-    <!-- Application configuration -->
+    <!--
+      No WRITE_EXTERNAL_STORAGE / READ_EXTERNAL_STORAGE and no
+      requestLegacyExternalStorage: both are no-ops on Android 11+ and would only
+      trigger Play Store policy review. The workbook lives in app-scoped storage
+      and leaves the app through the system share sheet instead.
+    -->
+
     <application
-        android:label="eduvision_0_1"
+        android:label="EduVision"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:requestLegacyExternalStorage="true"
-        android:usesCleartextTraffic="true">
+        android:icon="@mipmap/launcher_icon"
+        android:enableOnBackInvokedCallback="true">
 
         <activity
             android:name=".MainActivity"
@@ -27,7 +35,7 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize"
-            android:exported="true"> <!-- Ensures compatibility with Android 12 and above -->
+            android:exported="true">
 
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
@@ -39,14 +47,18 @@
             </intent-filter>
         </activity>
 
-        <!-- Flutter tool plugin generation meta-data -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Download the Latin text-recognition model at install time rather than
+             on first scan, so the very first scan works offline. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="ocr" />
+
     </application>
 
-    <!-- Queries for text processing (required by Flutter plugins) -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
