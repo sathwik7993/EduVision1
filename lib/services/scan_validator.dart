@@ -10,6 +10,9 @@ import 'roster_service.dart';
 /// confidence. Nothing is auto-corrected; a roster match is offered as a
 /// suggestion the teacher has to accept.
 abstract final class ScanValidator {
+  /// Stricter than [ExtractedField.trustedAbove]: see [_checkRegistration].
+  static const registrationTrustedAbove = 0.95;
+
   static ScanResult validate(
     ScanResult result,
     SheetTemplate template, {
@@ -128,6 +131,15 @@ abstract final class ScanValidator {
     if (!roster.isEmpty && !roster.contains(reg)) {
       suggestion = roster.closest(reg);
       issues.add('Not on the class roster');
+    }
+
+    // Ten characters give ten chances to misread one, and a one-digit misread
+    // of a roll number is usually another real student, so the roster cannot
+    // catch it. On the synthetic eval, 0.80 let ~2.5% of registration numbers
+    // through wrong; 0.95 let ~0.15% through.
+    if (field.confidence >= ExtractedField.trustedAbove &&
+        field.confidence < registrationTrustedAbove) {
+      issues.add('Not certain enough for a registration number');
     }
 
     // A second sheet with the same number is more often a misread of a

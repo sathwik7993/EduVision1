@@ -137,6 +137,13 @@ void main() {
       expect(r.questions.single.field.issue, contains('maximum of 5'));
     });
 
+    test('a registration number between the mark gate and 0.95 goes to review', () {
+      final r = ScanValidator.validate(
+          sheet().copyWith(registrationNo: f('23H51A66D9', 0.9)), cat);
+      expect(r.registrationNo.issue, contains('Not certain enough'));
+      expect(r.registrationNo.needsReview, isTrue);
+    });
+
     test('a value the teacher typed is never flagged', () {
       final r = ScanValidator.validate(
         sheet().copyWith(registrationNo: const ExtractedField.manual('23')),
