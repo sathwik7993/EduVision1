@@ -80,11 +80,15 @@ class OrtFieldModel implements FieldModel {
 
 /// One template field, cut out of the photo and ready for the model.
 class FieldCrop {
-  const FieldCrop(this.field, this.input, this.png);
+  const FieldCrop(this.field, this.input, this.png, {this.outside = false});
 
   final TemplateField field;
   final ModelInput input;
   final Uint8List png;
+
+  /// The box falls (partly) outside the photo, e.g. the slip was cut off.
+  /// Whatever the model reads there is meaningless.
+  final bool outside;
 }
 
 /// How a photo was registered onto the template, best first.
@@ -215,11 +219,19 @@ class OnnxSheetRecognizer implements SheetRecognizer {
     return [
       for (final field in fields)
         () {
-          final crop = PageAligner.sampleRegion(
-            page,
-            homography,
-            PageAligner.pad(field.box),
-          );
+          final box = PageAligner.pad(field.box);
+          final crop = PageAligner.sampleRegion(page, homography, box);
+          final tolX = page.width * 0.01, tolY = page.height * 0.01;
+          final outside = [
+            box.topLeft,
+            box.topRight,
+            box.bottomLeft,
+            box.bottomRight,
+          ].map((c) => homography.map(c.dx, c.dy)).any((p) =>
+              p.dx < -tolX ||
+              p.dy < -tolY ||
+              p.dx > page.width + tolX ||
+              p.dy > page.height + tolY);
           final png = img.encodePng(
             img.Image.fromBytes(
               width: crop.width,
@@ -228,7 +240,8 @@ class OnnxSheetRecognizer implements SheetRecognizer {
               numChannels: 1,
             ),
           );
-          return FieldCrop(field, CropPreprocessor.prepare(crop), png);
+          return FieldCrop(field, CropPreprocessor.prepare(crop), png,
+              outside: outside);
         }(),
     ];
   }
@@ -244,6 +257,15 @@ class OnnxSheetRecognizer implements SheetRecognizer {
     PageAlignment alignment = PageAlignment.none,
   }) {
     ExtractedField toField(FieldCrop crop, CtcReading r) {
+      if (crop.outside) {
+        return ExtractedField(
+          value: '',
+          confidence: 0,
+          rawText: r.text,
+          issue: 'Not in the photo: rescan the whole page or type it',
+          crop: crop.png,
+        );
+      }
       var value = r.text;
       if (crop.field.kind != FieldKind.registration && value.isNotEmpty) {
         value = int.tryParse(value)?.toString() ?? value; // "05" -> "5"

@@ -392,6 +392,28 @@ void main() {
     });
   });
 
+  test('a box cut off the photo is reported, not read', () {
+    final page = canonicalPage(const []);
+    // The page continues below the photo: rows past 0.9 were cut off.
+    final h = PageHomography.fromCorners([
+      Offset.zero,
+      Offset(page.width.toDouble(), 0),
+      Offset(page.width.toDouble(), page.height / 0.9),
+      Offset(0, page.height / 0.9),
+    ]);
+    final crops = OnnxSheetRecognizer.extractCrops(page, h, const [
+      TemplateField(kind: FieldKind.partA, box: Rect.fromLTRB(0.7, 0.5, 0.9, 0.55)),
+      TemplateField(kind: FieldKind.partB, box: Rect.fromLTRB(0.7, 0.93, 0.9, 0.97)),
+    ]);
+    expect(crops.map((c) => c.outside), [false, true]);
+    final result = OnnxSheetRecognizer.assemble([
+      for (final c in crops) (c, const CtcReading('7', 0.99)),
+    ]);
+    expect(result.partA.value, '7');
+    expect(result.partB.isEmpty, isTrue);
+    expect(result.partB.issue, contains('Not in the photo'));
+  });
+
   test('a validation issue forces review even at high confidence', () {
     const field = ExtractedField(value: '38', confidence: 0.99, issue: 'x');
     expect(field.needsReview, isTrue);
