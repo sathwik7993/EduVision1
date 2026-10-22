@@ -8,6 +8,7 @@ import '../../models/scan_result.dart';
 import 'anchor_aligner.dart';
 import 'crop_preprocessor.dart';
 import 'ctc_decoder.dart';
+import 'field_locator.dart';
 import 'page_aligner.dart';
 import 'page_loader.dart';
 import 'sheet_recognizer.dart';
@@ -91,8 +92,9 @@ class FieldCrop {
   final bool outside;
 }
 
-/// How a photo was registered onto the template, best first.
-enum PageAlignment { anchors, pageCorners, none }
+/// How a photo was registered onto the template, best first. [labels]: no
+/// template; the fields were found from the printed labels on this photo.
+enum PageAlignment { anchors, pageCorners, labels, none }
 
 /// Reads handwritten fields from template boxes with the on-device model.
 ///
@@ -129,9 +131,6 @@ class OnnxSheetRecognizer implements SheetRecognizer {
     String imagePath, {
     SheetTemplate template = SheetTemplate.defaults,
   }) async {
-    if (!template.hasBoxes) {
-      throw StateError('Template "${template.name}" has no field boxes.');
-    }
     final clock = Stopwatch()..start();
     final timings = <String, int>{};
     var last = 0;
@@ -143,10 +142,26 @@ class OnnxSheetRecognizer implements SheetRecognizer {
     final page = await PageLoader.load(imagePath);
     lap('decode');
 
-    final (homography, alignment) = await locatePage(page, template, _lines);
+    final PageHomography homography;
+    final PageAlignment alignment;
+    final List<TemplateField> fields;
+    if (template.hasBoxes) {
+      (homography, alignment) = await locatePage(page, template, _lines);
+      fields = template.fields;
+    } else {
+      final lines = _lines;
+      if (lines == null) throw StateError('No text reader to find the fields.');
+      fields = FieldLocator.locate(await lines.read(page), page.width, page.height);
+      if (fields.isEmpty) {
+        throw StateError('Could not find the printed labels on this sheet '
+            '(e.g. "Registered No.", "Part-A Total"). Photograph the whole '
+            'page, or draw a template for this layout in Sheet templates.');
+      }
+      homography = PageHomography.identity(page.width, page.height);
+      alignment = PageAlignment.labels;
+    }
     lap('align');
 
-    final fields = template.fields;
     final crops =
         await Isolate.run(() => extractCrops(page, homography, fields));
     lap('crop');

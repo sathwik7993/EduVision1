@@ -8,6 +8,7 @@ import 'package:eduvision_0_1/models/sheet_template.dart';
 import 'package:eduvision_0_1/services/recognition/anchor_aligner.dart';
 import 'package:eduvision_0_1/services/recognition/crop_preprocessor.dart';
 import 'package:eduvision_0_1/services/recognition/ctc_decoder.dart';
+import 'package:eduvision_0_1/services/recognition/field_locator.dart';
 import 'package:eduvision_0_1/services/recognition/onnx_recognizer.dart';
 import 'package:eduvision_0_1/services/recognition/page_aligner.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -417,5 +418,66 @@ void main() {
   test('a validation issue forces review even at high confidence', () {
     const field = ExtractedField(value: '38', confidence: 0.99, issue: 'x');
     expect(field.needsReview, isTrue);
+  });
+
+  group('FieldLocator', () {
+    // Printed labels as read on sample photo 12.13.28 (1033 x 1462), and the
+    // hand-drawn field boxes from sample_images/annotations.json, normalised.
+    const w = 1033, h = 1462;
+    TextLineHit line(String text, double x0, double x1, double y0, double y1) =>
+        TextLineHit(text, [
+          Offset(x0 * w, y0 * h), Offset(x1 * w, y0 * h),
+          Offset(x1 * w, y1 * h), Offset(x0 * w, y1 * h),
+        ]);
+    final lines = [
+      line('Registered No.', 0.431, 0.559, 0.200, 0.216),
+      line('anything other than their Registered Number on the question paper.',
+          0.100, 0.521, 0.443, 0.457),
+      line('PART-A/PART-B', 0.409, 0.572, 0.689, 0.702),
+      line('Part-A Total', 0.821, 0.933, 0.732, 0.748),
+      line('Part-B Total', 0.821, 0.931, 0.793, 0.808),
+      line('GRAND', 0.707, 0.779, 0.864, 0.878),
+      line('TOTAL', 0.708, 0.776, 0.878, 0.895),
+      line('Grand Total in Words:', 0.060, 0.252, 0.890, 0.904),
+    ];
+    const drawn = {
+      FieldKind.registration: Rect.fromLTRB(0.561, 0.188, 0.946, 0.219),
+      FieldKind.partA: Rect.fromLTRB(0.809, 0.750, 0.937, 0.791),
+      FieldKind.partB: Rect.fromLTRB(0.809, 0.812, 0.937, 0.852),
+      FieldKind.writtenTotal: Rect.fromLTRB(0.807, 0.853, 0.937, 0.906),
+    };
+
+    double iou(Rect a, Rect b) {
+      final i = a.intersect(b);
+      if (i.width <= 0 || i.height <= 0) return 0;
+      final inter = i.width * i.height;
+      return inter / (a.width * a.height + b.width * b.height - inter);
+    }
+
+    test('finds every field next to its printed label', () {
+      final fields = FieldLocator.locate(lines, w, h);
+      expect(fields.map((f) => f.kind), unorderedEquals(drawn.keys));
+      for (final f in fields) {
+        expect(iou(f.box, drawn[f.kind]!), greaterThan(0.6), reason: '${f.kind}');
+      }
+    });
+
+    test('works the same on a cropped, zoomed photo', () {
+      // Same sheet, left 30% cut off and shown at 1.5x: boxes follow labels.
+      final zoomed = [
+        for (final l in lines)
+          TextLineHit(l.text, [
+            for (final c in l.corners) Offset((c.dx - 0.3 * w) * 1.5, c.dy * 1.5),
+          ]),
+      ];
+      final fields = FieldLocator.locate(zoomed, (0.7 * w * 1.5).round(), (h * 1.5).round());
+      final reg = fields.firstWhere((f) => f.kind == FieldKind.registration).box;
+      final expected = Rect.fromLTRB((0.561 - 0.3) / 0.7, 0.188, (0.946 - 0.3) / 0.7, 0.219);
+      expect(iou(reg, expected), greaterThan(0.6));
+    });
+
+    test('finds nothing on a layout without these labels', () {
+      expect(FieldLocator.locate([line('Name of the student', 0.1, 0.4, 0.1, 0.12)], w, h), isEmpty);
+    });
   });
 }

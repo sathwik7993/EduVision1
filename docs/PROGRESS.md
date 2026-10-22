@@ -116,6 +116,27 @@ output `probs` [1,T,37]), `field_recognizer.int8.onnx` (LSTM/MatMul int8,
 convs fp32), `field_recognizer.pt`, `eval_sets.npz`, `results.json`
 (synthetic held-out metrics, size, stop reason, minutes).
 
+## Template-free field detection (session 2)
+
+After the first phone test (scans took 10-15 s and gave wrong values) it
+turned out no template had been drawn, so every scan used the ML Kit
+printed-text fallback: three full-image variants in pure Dart, then label
+guessing; the handwriting model never ran. Teachers should not have to draw
+boxes first, so `FieldLocator` now places the fields from the printed labels
+the one ML Kit pass already reads ("Registered No." -> right of it;
+"Part-A/B Total" -> the cell below; "GRAND"/"TOTAL" -> the cell right of
+it), in label-size units so cropped or zoomed photos work. The model is the
+default engine; a drawn template is used when one is active. "Total in
+words" is not auto-detected (a digit model cannot read words).
+
+Local eval (`training/real_eval/eval_auto_fields.py`, RapidOCR standing in
+for ML Kit): fields found 34/34, read right 30/34 with the v4 model
+(registration 7/9, all below the 0.95 gate so reviewed). Two Part-A cells
+("10" read as "20" on the two left-cropped photos of one sheet) pass the
+0.90 gate; on 12.13.31 the grand-total cross-check flags it, on 12.13.32 the
+sheet goes to review for the missing Part-B but Part-A itself looks trusted.
+Not yet run on a phone (ML Kit's line splitting may differ from RapidOCR's).
+
 ## Model accuracy and size
 
 ### v4 (shipped as `assets/models/field_recognizer_v2.onnx`, fp32)
