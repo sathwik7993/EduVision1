@@ -54,6 +54,10 @@ newest state is at the top of each section.
 
 ## Verification log
 
+- Session 2 (cloud, Flutter 3.47.7 / Dart 3.13.5): `flutter analyze` no
+  issues (after adding the `assets/models/.gitkeep` placeholder);
+  `flutter test`: 66 tests pass. `flutter build apk` not possible here: the
+  session's network policy blocks `dl.google.com` (Android SDK).
 - `flutter analyze`: no issues (last run after the benchmark harness commit).
 - `flutter test`: 65 tests pass (`test/extraction_test.dart`,
   `recognition_pipeline_test.dart`, `validation_test.dart`,
@@ -66,9 +70,12 @@ newest state is at the top of each section.
 
 ## Kaggle runs and GPU time
 
-Credentials: `KAGGLE_API_TOKEN` is **not** visible in this session's
-environment; the CLI authenticates through `~/.kaggle/kaggle.json`
-(`kaggle kernels list --mine` works). All kernels are private.
+Credentials: session 1 authenticated through `~/.kaggle/kaggle.json`.
+Session 2 had `KAGGLE_API_TOKEN` set as an environment variable, but the
+environment's network policy rejected `api.kaggle.com` and `www.kaggle.com`
+(proxy 403), so v3 could not be polled or fetched and no GPU time was used.
+Add both hosts to the environment's Allowed domains (and `dl.google.com` for
+release builds), then start a new session. All kernels are private.
 
 | Kernel | Config | Outcome | GPU time |
 |---|---|---|---|
@@ -108,9 +115,9 @@ auto-accept rate, silent-error rate (wrong but above the 0.80 gate), and
 accuracy when accepted. Report the real-sheet eval separately (9 photos, 41
 hand-boxed fields; a smoke test, not a statistic).
 
-`assets/models/` is declared in `pubspec.yaml` but the model is **not
-committed yet**, so a clean checkout will not build until step 1 below is
-done.
+`assets/models/` holds only a `.gitkeep` placeholder until step 1 below is
+done. A clean checkout builds; the ONNX model fails to load and scanning falls
+back to ML Kit (printed text only, so handwritten marks go to review).
 
 ## Real sample sheets (local only)
 
