@@ -15,7 +15,16 @@ import subprocess
 import sys
 
 subprocess.run(
-    [sys.executable, "-m", "pip", "install", "-q", "paddlepaddle==3.0.0", "paddle2onnx==2.0.1", "onnxruntime", "huggingface_hub", "pyyaml"],
+    [sys.executable, "-m", "pip", "install", "-q", "onnxruntime", "huggingface_hub", "pyyaml", "uv"],
+    check=True,
+)
+# paddle2onnx has no Python 3.13 build (the Kaggle image's Python); convert
+# in a separate 3.12 environment.
+P2O = "/tmp/p2o"
+subprocess.run([sys.executable, "-m", "uv", "venv", "-q", "--python", "3.12", P2O], check=True)
+subprocess.run(
+    [sys.executable, "-m", "uv", "pip", "install", "-q", "--python", f"{P2O}/bin/python",
+     "paddlepaddle==3.0.0", "paddle2onnx==2.0.1"],
     check=True,
 )
 
@@ -145,7 +154,7 @@ def session(path):
 # %%
 model_dir = snapshot_download("PaddlePaddle/en_PP-OCRv5_mobile_rec")
 subprocess.run(
-    ["paddle2onnx", "--model_dir", model_dir, "--model_filename", "inference.json",
+    [f"{P2O}/bin/paddle2onnx", "--model_dir", model_dir, "--model_filename", "inference.json",
      "--params_filename", "inference.pdiparams", "--save_file", "en_PP-OCRv5_mobile_rec.onnx",
      "--opset_version", "14"],
     check=True,
