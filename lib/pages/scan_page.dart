@@ -32,13 +32,13 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
   final ImagePicker _picker = ImagePicker();
   final SheetRecognizer _mlKit = MlKitSheetRecognizer();
 
-  /// Loaded only when the active template has field boxes. Null if the model
+  /// The handwriting model: uses the template's boxes, or finds the fields
+  /// from the printed labels when there is no template. Null if the model
   /// failed to load, in which case scanning falls back to ML Kit.
   OnnxSheetRecognizer? _onnx;
   SheetTemplate _template = SheetTemplate.defaults;
 
-  SheetRecognizer get _recognizer =>
-      _template.hasBoxes && _onnx != null ? _onnx! : _mlKit;
+  SheetRecognizer get _recognizer => _onnx ?? _mlKit;
 
   CameraController? _controller;
   List<CameraDescription> _cameras = const [];
@@ -59,7 +59,6 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
     final template = await TemplateStore.instance.active();
     if (!mounted) return;
     setState(() => _template = template);
-    if (!template.hasBoxes) return;
     try {
       final onnx = await OnnxSheetRecognizer.load();
       if (!mounted) {
@@ -393,10 +392,8 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
             // Which layout and engine this scan will use, so a wrong active
             // template is noticed before the teacher scans a whole stack.
             GlassBadge(
-              label: _template.hasBoxes
-                  ? _template.name
-                  : 'No template — printed text only',
-              color: _template.hasBoxes ? AppColors.primary : AppColors.inkMuted,
+              label: _template.hasBoxes ? _template.name : 'Auto-detect fields',
+              color: AppColors.primary,
               icon: Icons.grid_view_rounded,
             ),
             const Spacer(),
