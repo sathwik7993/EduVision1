@@ -341,6 +341,22 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True, layout: st
         if rng.random() < 0.25:  # table column at one side
             x = int(rng.integers(0, max(1, left))) if rng.random() < 0.5 else w - 1 - int(rng.integers(0, max(1, right)))
             cv2.line(lines, (x, 0), (x, h), line_level, t)
+    # Printed text cut off by the crop edge: the end of a label such as
+    # "Registered No.:" right before the comb, or a neighbouring cell. v3 read
+    # these as a leading digit on every real sheet; they are never part of the
+    # field.
+    for margin, at_left in ((left, True), (right, False)):
+        if margin < 4 or rng.random() > 0.35:
+            continue
+        frag = _printed_ink("".join(rng.choice(list(CHARSET + ".:-"), size=int(rng.integers(1, 4)))), rng)
+        fh = min(h, max(4, int(ih * rng.uniform(0.5, 1.1))))
+        frag = cv2.resize(frag, (max(2, int(frag.shape[1] * fh / frag.shape[0])), fh))
+        # Always cut: a whole printed string in the margin would be ambiguous.
+        vis = max(2, min(int(frag.shape[1] * rng.uniform(0.2, 0.7)), int(margin * 0.9)))
+        frag = frag[:, -vis:] if at_left else frag[:, :vis]
+        y = int(rng.integers(0, h - fh + 1))
+        x = 0 if at_left else w - vis
+        np.maximum(lines[y : y + fh, x : x + vis], frag * rng.uniform(0.6, 1.0), out=lines[y : y + fh, x : x + vis])
     if 0 < len(text) <= 3 and rng.random() < 0.15:  # examiner circles the total
         cv2.ellipse(
             lines, (left + iw // 2, top + ih // 2),
@@ -640,6 +656,9 @@ def main():
     ap.add_argument("--workers", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--eval-n", type=int, default=2000)
     ap.add_argument("--smoke", action="store_true", help="tiny run on test CSVs to check the pipeline")
+    ap.add_argument("--init", default="field_recognizer.pt",
+                    help="state dict to fine-tune from (a path, or a file name found under --data-dir, "
+                         "e.g. an attached earlier kernel's output); trains from scratch if not found")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -664,6 +683,10 @@ def main():
     print(f"data ready after {(time.time() - script_start) / 60:.1f} min", flush=True)
 
     model = FieldRecognizer().to(device)
+    hits = [args.init] if os.path.exists(args.init) else glob.glob(os.path.join(args.data_dir, "**", args.init), recursive=True)
+    if hits:
+        model.load_state_dict(torch.load(hits[0], map_location=device))
+        print("fine-tuning from", hits[0], flush=True)
     params = sum(p.numel() for p in model.parameters())
     print("params", params, flush=True)
     loader = torch.utils.data.DataLoader(
