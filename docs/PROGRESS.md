@@ -108,22 +108,57 @@ convs fp32), `field_recognizer.pt`, `eval_sets.npz`, `results.json`
 
 ## Model accuracy and size
 
-**No trained model yet; no accuracy numbers exist.** Size of the architecture
-(from the smoke export): ~0.97M parameters, fp32 ONNX 3.9 MB, int8
-(LSTM/MatMul only) 2.7 MB. In the smoke test fully int8 ONNX (convs too) was
-~15x slower on desktop CPU, so convs stay fp32. Desktop single-thread time per
-crop was 1–5 ms for the smoke model (not a phone number).
+### v3 (shipped as `assets/models/field_recognizer_v1.onnx`, fp32)
 
-When v3 finishes, report from `results.json` per set (`emnist_digit`,
-`marks_clean`, `marks_exam`, `marks_cell`, `reg_exam`, `reg_comb`; all
-**synthetic**, from EMNIST *test* glyphs): exact accuracy, CER,
-auto-accept rate, silent-error rate (wrong but above the 0.80 gate), and
-accuracy when accepted. Report the real-sheet eval separately (9 photos, 41
-hand-boxed fields; a smoke test, not a statistic).
+~0.97M parameters. fp32 ONNX 3.87 MB, int8 (LSTM/MatMul only) 2.66 MB with
+the same accuracy to within 0.3 points on every set. fp32 ships: int8 saves
+1.2 MB of a ~66 MB APK and its LSTM speed on ARM is unmeasured. int8 and the
+eval were produced offline in session 2 from v3's fp32 output (same code as
+the kernel), since v3 crashed before them.
 
-`assets/models/` holds only a `.gitkeep` placeholder until step 1 below is
-done. A clean checkout builds; the ONNX model fails to load and scanning falls
-back to ML Kit (printed text only, so handwritten marks go to review).
+Synthetic held-out sets (2000 each, EMNIST *test* glyphs; **not real
+handwriting**). Silent = wrong but auto-accepted. Desktop ms/crop, 1 thread.
+
+| Set | Exact | CER | Auto-accept @0.80 | Silent @0.80 | ms/crop |
+|---|---|---|---|---|---|
+| emnist_digit | 0.996 | 0.004 | 0.988 | 0.0020 | 0.7 |
+| marks_clean | 0.996 | 0.003 | 0.989 | 0.0025 | 0.9 |
+| marks_exam | 0.986 | 0.009 | 0.917 | 0.0055 | 1.1 |
+| marks_cell | 0.978 | 0.014 | 0.903 | 0.0070 | 1.4 |
+| reg_exam | 0.675 | 0.043 | 0.563 | 0.0790 | 2.9 |
+| reg_comb | 0.677 | 0.043 | 0.541 | 0.0725 | 2.9 |
+
+Registration numbers decoded the way the app does (template mask; a
+wrong-length read is "incomplete" and goes to review), gate swept:
+
+| Set | Exact | @0.80 accept / silent | @0.90 | @0.95 | @0.98 |
+|---|---|---|---|---|---|
+| reg_exam | 0.825 | 0.506 / 0.0230 | 0.348 / 0.0070 | 0.205 / 0.0015 | 0.092 / 0.0005 |
+| reg_comb | 0.807 | 0.436 / 0.0250 | 0.275 / 0.0050 | 0.134 / 0.0015 | 0.052 / 0.0005 |
+| marks_exam | 0.986 | 0.916 / 0.0055 | 0.894 / 0.0030 | 0.842 / 0.0020 | 0.679 / 0.0005 |
+| marks_cell | 0.978 | 0.903 / 0.0070 | 0.875 / 0.0050 | 0.824 / 0.0040 | 0.665 / 0.0025 |
+
+Decision (session 2): registration numbers now need 0.95
+(`ScanValidator.registrationTrustedAbove`); below that they go to review
+with "Not certain enough for a registration number". A roster cannot catch a
+one-digit roll-number misread, because that is usually another real student.
+Marks keep 0.80 (silent 0.55–0.7% synthetic; the per-question sum and
+written-total cross-checks catch part of the rest). **Open decision for the
+owner:** 0.90 for marks would roughly halve silent errors at the cost of
+~3 points more review.
+
+### Real sheets, v3 (`eval_real.py`, 9 photos, 41 hand-boxed fields)
+
+A smoke test, not a statistic. Default 6% box padding: exact 25/41,
+registration 0/9. **Every registration number and several totals were read
+with an extra leading character** (e.g. a 10-character reg no read as 11,
+"30" as "530"): the padding pulls the end of the printed label next to the
+box into the crop. In the app these reg nos fail the length check and go to
+review, so none is silently accepted, but none is read right either.
+Without padding: exact 39/41, registration 8/9; but a 3% box shift to the
+left (a realistic alignment residual) brings it back to 0/9 at any padding,
+so padding is not the fix. v4 (below) trains on printed text cut off at the
+crop edges.
 
 ## Real sample sheets (local only)
 
