@@ -39,7 +39,7 @@ DIGITS = CHARSET[:10]
 INPUT_HEIGHT = 32
 MIN_WIDTH = 16
 MAX_WIDTH = 512
-TRUSTED_ABOVE = 0.80  # ExtractedField.trustedAbove
+TRUSTED_ABOVE = 0.90  # ExtractedField.trustedAbove
 
 # Registration-number shapes seen on Indian exam sheets. D = digit, A = letter.
 REG_SHAPES = [

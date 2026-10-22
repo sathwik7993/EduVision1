@@ -55,7 +55,10 @@ class ExtractedField {
   /// kept, with the confirmed value, as a labelled sample on the device.
   final Uint8List? crop;
 
-  static const trustedAbove = 0.80;
+  /// Was 0.80. On the real sample sheets the v4 model read "10" as "20" at
+  /// 0.88 twice; on the synthetic sets 0.90 roughly halves wrong-but-accepted
+  /// marks for ~3 points more review (docs/PROGRESS.md).
+  static const trustedAbove = 0.90;
 
   bool get isEmpty => value.trim().isEmpty;
   bool get needsReview =>
