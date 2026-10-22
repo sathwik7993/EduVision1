@@ -24,7 +24,7 @@ P2O = "/tmp/p2o"
 subprocess.run([sys.executable, "-m", "uv", "venv", "-q", "--python", "3.12", P2O], check=True)
 subprocess.run(
     [sys.executable, "-m", "uv", "pip", "install", "-q", "--python", f"{P2O}/bin/python",
-     "paddlepaddle==3.0.0", "paddle2onnx==2.0.1"],
+     "paddlepaddle==3.0.0", "paddle2onnx==2.0.1", "setuptools"],
     check=True,
 )
 
