@@ -620,6 +620,13 @@ def main():
     # Kaggle shows a script's log only as it is flushed.
     sys.stdout.reconfigure(line_buffering=True)
     script_start = time.time()
+    # The Kaggle image lacks onnxruntime (v3 crashed on it after training).
+    # Install it before training, not after.
+    try:
+        import onnxruntime  # noqa: F401
+    except ImportError:
+        import subprocess
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "onnxruntime"], check=True)
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="/kaggle/input")
     ap.add_argument("--out-dir", default=".")

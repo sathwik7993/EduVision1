@@ -71,17 +71,16 @@ newest state is at the top of each section.
 ## Kaggle runs and GPU time
 
 Credentials: session 1 authenticated through `~/.kaggle/kaggle.json`.
-Session 2 had `KAGGLE_API_TOKEN` set as an environment variable, but the
-environment's network policy rejected `api.kaggle.com` and `www.kaggle.com`
-(proxy 403), so v3 could not be polled or fetched and no GPU time was used.
-Add both hosts to the environment's Allowed domains (and `dl.google.com` for
-release builds), then start a new session. All kernels are private.
+Session 2 uses `KAGGLE_API_TOKEN` (environment variable). The cloud
+environment needs `api.kaggle.com`, `www.kaggle.com` and, for kernel
+*outputs*, `www.kaggleusercontent.com` in its Allowed domains (dataset
+downloads go through `storage.googleapis.com` and already work). All kernels are private.
 
 | Kernel | Config | Outcome | GPU time |
 |---|---|---|---|
 | `eduvision-field-recognizer` (v1) | old generator, 15k steps, 150 min cap | stopped by the owner after ~1.5 h with empty logs (status ERROR); no output used | ~1.5 h (T4) |
 | `eduvision-field-recognizer-v2` | new generator, old 150 min cap | ran a few minutes concurrently with v1, then deleted to respect one-GPU-kernel-at-a-time and the 60 min cap | < 0.3 h |
-| `eduvision-field-recognizer-v3` | new generator (comb/cell layouts, partial reg nos, stray marks, motion blur), 60 min hard cap, validation every 1000 steps with patience 4, line-buffered logs | pushed 07:35 UTC; **QUEUED** when this session ended (handover) | ≤ 60 min when it runs |
+| `eduvision-field-recognizer-v3` | new generator (comb/cell layouts, partial reg nos, stray marks, motion blur), 60 min hard cap, validation every 1000 steps with patience 4, line-buffered logs | ran 08:05–08:57 UTC; trained to the wall-clock cap (step 12296, ~1065 samples/s, best synthetic val exact 0.7467, still rising slowly: 0.59 @1k, 0.675 @3k, 0.733 @8k, 0.747 @12k). Wrote `field_recognizer.pt`, `.onnx` and `eval_sets.npz`, then **ERROR**: `onnxruntime` is not in the Kaggle image, so int8 export and `results.json` never ran. Fixed in the script (installs it at start). The fp32 model is usable; int8 + eval can run offline from it | ~51 min (T4) |
 
 PP-OCRv5 comparison (`training/ppocr_eval/`, kernel id
 `sathwikchappala/eduvision-ppocr-eval`, CPU only) has **not been pushed yet**.
