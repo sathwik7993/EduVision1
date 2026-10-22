@@ -1,5 +1,7 @@
 import 'package:eduvision_0_1/models/scan_result.dart';
+import 'package:eduvision_0_1/models/sheet_template.dart';
 import 'package:eduvision_0_1/pages/review_page.dart';
+import 'package:eduvision_0_1/services/roster_service.dart';
 import 'package:eduvision_0_1/theme/app_theme.dart';
 import 'package:eduvision_0_1/widgets/glass.dart';
 import 'package:flutter/material.dart';
@@ -145,6 +147,69 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('75'), findsOneWidget);
+    });
+
+    testWidgets('a disagreeing written total blocks until checked',
+        (tester) async {
+      useTallSurface(tester);
+      const template = SheetTemplate(partAMax: 40, partBMax: 80);
+      await tester.pumpWidget(
+        host(
+          ReviewPage(
+            result: ScanResult(
+              registrationNo:
+                  const ExtractedField(value: '23H53A66D9', confidence: 0.95),
+              partA: const ExtractedField(value: '40', confidence: 0.95),
+              partB: const ExtractedField(value: '80', confidence: 0.95),
+              writtenTotals: const [
+                LabelledMark(
+                  label: 'Total in words',
+                  part: '',
+                  field: ExtractedField(value: '30', confidence: 0.95),
+                ),
+              ],
+            ),
+            engineName: 'Test engine',
+            engineReadsHandwriting: true,
+            template: template,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Needs your check'), findsOneWidget);
+      expect(find.textContaining('but Part-A + Part-B = 120'), findsOneWidget);
+      // Part-B 80 is within this template's maximum, so only one flag.
+      expect(find.text('Matches the sheet'), findsOneWidget);
+
+      // Fixing the arithmetic upstream clears the conflict live.
+      await tester.enterText(find.byType(TextField).at(1), '10');
+      await tester.enterText(find.byType(TextField).at(2), '20');
+      await tester.pumpAndSettle();
+      expect(find.text('Read with high confidence'), findsOneWidget);
+      expect(find.text('30'), findsWidgets);
+    });
+
+    testWidgets('offers the roster suggestion for an unknown number',
+        (tester) async {
+      useTallSurface(tester);
+      await tester.pumpWidget(
+        host(
+          ReviewPage(
+            result: result(),
+            engineName: 'Test engine',
+            engineReadsHandwriting: true,
+            roster: Roster(['21B01A0513']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Not on the class roster'), findsOneWidget);
+      await tester.tap(find.text('Use 21B01A0513'));
+      await tester.pumpAndSettle();
+      expect(find.text('21B01A0513'), findsOneWidget);
+      expect(find.text('Entered by you'), findsOneWidget);
     });
   });
 }

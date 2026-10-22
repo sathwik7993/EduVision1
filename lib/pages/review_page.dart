@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/scan_result.dart';
+import '../models/sheet_template.dart';
+import '../services/correction_store.dart';
+import '../services/roster_service.dart';
+import '../services/scan_validator.dart';
 import '../services/sheet_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass.dart';
@@ -20,54 +24,101 @@ class ReviewPage extends StatefulWidget {
     required this.result,
     required this.engineName,
     required this.engineReadsHandwriting,
+    this.template = SheetTemplate.defaults,
+    this.roster,
+    this.alreadySaved = const {},
   });
 
   final ScanResult result;
   final String engineName;
   final bool engineReadsHandwriting;
+  final SheetTemplate template;
+  final Roster? roster;
+  final Set<String> alreadySaved;
 
   @override
   State<ReviewPage> createState() => _ReviewPageState();
 }
 
 class _ReviewPageState extends State<ReviewPage> {
-  late ScanResult _result = widget.result;
+  /// Recognizer output plus the teacher's edits. Validation is re-run on it
+  /// after every edit, so a corrected Part-A immediately re-checks the
+  /// written grand total.
+  late ScanResult _base = widget.result;
+  late ScanResult _result = _validate(_base);
+
   late final TextEditingController _reg =
       TextEditingController(text: _result.registrationNo.value);
   late final TextEditingController _partA =
       TextEditingController(text: _result.partA.value);
   late final TextEditingController _partB =
       TextEditingController(text: _result.partB.value);
+  late final List<TextEditingController> _questions = [
+    for (final q in _result.questions) TextEditingController(text: q.field.value),
+  ];
+  late final List<TextEditingController> _written = [
+    for (final w in _result.writtenTotals)
+      TextEditingController(text: w.field.value),
+  ];
 
   bool _saving = false;
   bool _showRaw = false;
 
   @override
   void dispose() {
-    _reg.dispose();
-    _partA.dispose();
-    _partB.dispose();
+    for (final c in [_reg, _partA, _partB, ..._questions, ..._written]) {
+      c.dispose();
+    }
     super.dispose();
   }
 
-  void _onRegChanged(String value) {
-    setState(() {
-      _result = _result.copyWith(
-        registrationNo: ExtractedField.manual(value.trim().toUpperCase()),
+  ScanResult _validate(ScanResult base) => ScanValidator.validate(
+        base,
+        widget.template,
+        roster: widget.roster,
+        alreadySaved: widget.alreadySaved,
       );
+
+  void _update(ScanResult base) {
+    setState(() {
+      _base = base;
+      _result = _validate(base);
     });
   }
 
-  void _onPartAChanged(String value) {
-    setState(() {
-      _result = _result.copyWith(partA: ExtractedField.manual(value.trim()));
-    });
+  /// The teacher's value replaces the reading but keeps its crop, so the
+  /// pair can be stored as a labelled sample.
+  ExtractedField _manual(ExtractedField old, String value) =>
+      ExtractedField.manual(value, crop: old.crop);
+
+  void _onRegChanged(String value) => _update(_base.copyWith(
+      registrationNo:
+          _manual(_base.registrationNo, value.trim().toUpperCase())));
+
+  void _onPartAChanged(String value) =>
+      _update(_base.copyWith(partA: _manual(_base.partA, value.trim())));
+
+  void _onPartBChanged(String value) =>
+      _update(_base.copyWith(partB: _manual(_base.partB, value.trim())));
+
+  void _onQuestionChanged(int i, String value) {
+    final qs = [..._base.questions];
+    qs[i] = qs[i].withField(_manual(qs[i].field, value.trim()));
+    _update(_base.copyWith(questions: qs));
   }
 
-  void _onPartBChanged(String value) {
-    setState(() {
-      _result = _result.copyWith(partB: ExtractedField.manual(value.trim()));
-    });
+  void _onWrittenChanged(int i, String value) {
+    final ws = [..._base.writtenTotals];
+    ws[i] = ws[i].withField(_manual(ws[i].field, value.trim()));
+    _update(_base.copyWith(writtenTotals: ws));
+  }
+
+  /// "This reading is right" without retyping it.
+  void _confirm(TextEditingController controller, ValueChanged<String> onChanged,
+      [String? value]) {
+    final v = value ?? controller.text;
+    controller.text = v;
+    onChanged(v);
   }
 
   Future<void> _save() async {
@@ -76,25 +127,40 @@ class _ReviewPageState extends State<ReviewPage> {
       _toast('Enter a registration number before saving.');
       return;
     }
+    final blocking = ScanValidator.blockingErrors(_result, widget.template);
+    if (blocking.isNotEmpty) {
+      _toast(blocking.join('\n'));
+      return;
+    }
 
     setState(() => _saving = true);
     try {
       final service = SheetService.instance;
 
-      // Explicit duplicate handling. The old flow appended blindly, so
-      // re-scanning a sheet silently produced two rows for one student.
+      // One row per student. Re-scanning the same sheet replaces its row;
+      // the old "add anyway" option produced duplicate rows.
       var overwrite = false;
       if (await service.containsRegistration(reg)) {
         if (!mounted) return;
-        final choice = await _askOverwrite(reg);
-        if (choice == null) {
+        final replace = await _askOverwrite(reg);
+        if (replace != true) {
           if (mounted) setState(() => _saving = false);
           return;
         }
-        overwrite = choice;
+        overwrite = true;
       }
 
       final outcome = await service.save(_result, overwrite: overwrite);
+      try {
+        await CorrectionStore.instance.record(
+          original: widget.result,
+          reviewed: _result,
+          templateId: widget.template.id,
+        );
+      } on Exception catch (e) {
+        // Labelled samples are a bonus; never lose a save over them.
+        debugPrint('Could not store labelled crops: $e');
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
       if (outcome == SaveOutcome.updated) {
@@ -119,16 +185,12 @@ class _ReviewPageState extends State<ReviewPage> {
         title: const Text('Already scanned'),
         content: Text(
           '$reg is already in the results sheet.\n\n'
-          'Replace the existing row, or add this as a separate entry?',
+          'Replace the existing row with these marks?',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(null),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Add anyway'),
+            child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
@@ -169,6 +231,11 @@ class _ReviewPageState extends State<ReviewPage> {
           ],
           EntranceFade(index: 2, child: _buildFields()),
           const SizedBox(height: AppSpacing.md),
+          if (_result.questions.isNotEmpty ||
+              _result.writtenTotals.isNotEmpty) ...[
+            EntranceFade(index: 3, child: _buildExtraMarks()),
+            const SizedBox(height: AppSpacing.md),
+          ],
           EntranceFade(index: 3, child: _buildTotal()),
           const SizedBox(height: AppSpacing.md),
           EntranceFade(index: 4, child: _buildRawText()),
@@ -214,7 +281,7 @@ class _ReviewPageState extends State<ReviewPage> {
                   clean
                       ? 'Confirm the values below, then save.'
                       : 'Could not read ${pending.join(', ')} reliably. '
-                          'Type the correct value for each.',
+                          'Check each one against the sheet.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 if (!widget.engineReadsHandwriting) ...[
@@ -260,6 +327,12 @@ class _ReviewPageState extends State<ReviewPage> {
     );
   }
 
+  static final _markFormatters = [
+    FilteringTextInputFormatter.digitsOnly,
+    LengthLimitingTextInputFormatter(3),
+  ];
+  static const _markKeyboard = TextInputType.numberWithOptions(signed: false);
+
   Widget _buildFields() {
     return GlassCard(
       child: Column(
@@ -269,6 +342,7 @@ class _ReviewPageState extends State<ReviewPage> {
             controller: _reg,
             field: _result.registrationNo,
             onChanged: _onRegChanged,
+            onConfirm: (v) => _confirm(_reg, _onRegChanged, v),
             keyboardType: TextInputType.visiblePassword,
             formatters: [
               FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9]')),
@@ -282,11 +356,9 @@ class _ReviewPageState extends State<ReviewPage> {
             controller: _partA,
             field: _result.partA,
             onChanged: _onPartAChanged,
-            keyboardType: const TextInputType.numberWithOptions(signed: false),
-            formatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(3),
-            ],
+            onConfirm: (v) => _confirm(_partA, _onPartAChanged, v),
+            keyboardType: _markKeyboard,
+            formatters: _markFormatters,
           ),
           const Divider(height: AppSpacing.lg),
           _FieldRow(
@@ -294,15 +366,40 @@ class _ReviewPageState extends State<ReviewPage> {
             controller: _partB,
             field: _result.partB,
             onChanged: _onPartBChanged,
-            keyboardType: const TextInputType.numberWithOptions(signed: false),
-            formatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(3),
-            ],
+            onConfirm: (v) => _confirm(_partB, _onPartBChanged, v),
+            keyboardType: _markKeyboard,
+            formatters: _markFormatters,
           ),
         ],
       ),
     );
+  }
+
+  /// Per-question marks and totals written on the sheet. A blank cell is
+  /// normal here, so these rows only ask for attention when doubtful.
+  Widget _buildExtraMarks() {
+    final rows = <Widget>[];
+    void add(LabelledMark m, TextEditingController c, ValueChanged<String> on) {
+      if (rows.isNotEmpty) rows.add(const Divider(height: AppSpacing.lg));
+      rows.add(_FieldRow(
+        label: m.part.isEmpty ? m.label : '${m.label} (Part-${m.part})',
+        controller: c,
+        field: m.field,
+        blankIsFine: !m.needsReview,
+        onChanged: on,
+        onConfirm: (v) => _confirm(c, on, v),
+        keyboardType: _markKeyboard,
+        formatters: _markFormatters,
+      ));
+    }
+
+    for (var i = 0; i < _result.questions.length; i++) {
+      add(_result.questions[i], _questions[i], (v) => _onQuestionChanged(i, v));
+    }
+    for (var i = 0; i < _result.writtenTotals.length; i++) {
+      add(_result.writtenTotals[i], _written[i], (v) => _onWrittenChanged(i, v));
+    }
+    return GlassCard(child: Column(children: rows));
   }
 
   Widget _buildTotal() {
@@ -405,23 +502,32 @@ class _ReviewPageState extends State<ReviewPage> {
   }
 }
 
-/// One labelled input with a confidence badge.
+/// One labelled input with a confidence badge, the crop the model read, and
+/// any validation issue.
 class _FieldRow extends StatelessWidget {
   const _FieldRow({
     required this.label,
     required this.controller,
     required this.field,
     required this.onChanged,
+    required this.onConfirm,
     required this.keyboardType,
     required this.formatters,
+    this.blankIsFine = false,
   });
 
   final String label;
   final TextEditingController controller;
   final ExtractedField field;
   final ValueChanged<String> onChanged;
+
+  /// Accept a value as correct (the reading, or a suggestion).
+  final ValueChanged<String?> onConfirm;
   final TextInputType keyboardType;
   final List<TextInputFormatter> formatters;
+  final bool blankIsFine;
+
+  bool get _needsReview => !blankIsFine && field.needsReview;
 
   @override
   Widget build(BuildContext context) {
@@ -437,6 +543,22 @@ class _FieldRow extends StatelessWidget {
             _confidenceBadge(),
           ],
         ),
+        if (field.crop != null) ...[
+          const SizedBox(height: AppSpacing.sm),
+          // Exactly what the model saw, so the teacher compares like with
+          // like instead of hunting for the field on the full photo.
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            child: Image.memory(
+              field.crop!,
+              height: 44,
+              fit: BoxFit.contain,
+              alignment: Alignment.centerLeft,
+              gaplessPlayback: true,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+          ),
+        ],
         const SizedBox(height: AppSpacing.sm),
         TextField(
           controller: controller,
@@ -450,12 +572,37 @@ class _FieldRow extends StatelessWidget {
             letterSpacing: 0.5,
           ),
           decoration: InputDecoration(
-            hintText: 'Tap to enter',
-            suffixIcon: field.needsReview
+            hintText: blankIsFine ? 'Blank' : 'Tap to enter',
+            suffixIcon: _needsReview
                 ? const Icon(Icons.edit_outlined, color: AppColors.warning)
                 : null,
           ),
         ),
+        if (!field.edited && field.issue != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            field.issue!,
+            style: const TextStyle(fontSize: 12, color: AppColors.danger),
+          ),
+        ],
+        if (_needsReview && (field.suggestion != null || !field.isEmpty))
+          Wrap(
+            spacing: AppSpacing.sm,
+            children: [
+              if (field.suggestion != null)
+                TextButton.icon(
+                  onPressed: () => onConfirm(field.suggestion),
+                  icon: const Icon(Icons.auto_fix_high, size: 16),
+                  label: Text('Use ${field.suggestion}'),
+                ),
+              if (!field.isEmpty)
+                TextButton.icon(
+                  onPressed: () => onConfirm(null),
+                  icon: const Icon(Icons.check, size: 16),
+                  label: const Text('Matches the sheet'),
+                ),
+            ],
+          ),
       ],
     );
   }
@@ -468,6 +615,13 @@ class _FieldRow extends StatelessWidget {
         icon: Icons.person_outline,
       );
     }
+    if (field.isEmpty && blankIsFine) {
+      return const GlassBadge(
+        label: 'Blank',
+        color: AppColors.inkMuted,
+        icon: Icons.remove,
+      );
+    }
     if (field.isEmpty) {
       return const GlassBadge(
         label: 'Not found',
@@ -475,9 +629,11 @@ class _FieldRow extends StatelessWidget {
         icon: Icons.search_off,
       );
     }
-    if (field.needsReview) {
+    if (_needsReview) {
       return GlassBadge(
-        label: 'Low • ${(field.confidence * 100).round()}%',
+        label: field.issue != null && field.confidence >= ExtractedField.trustedAbove
+            ? 'Check'
+            : 'Low • ${(field.confidence * 100).round()}%',
         color: AppColors.warning,
         icon: Icons.warning_amber_rounded,
       );

@@ -165,7 +165,10 @@ abstract final class ScanValidator {
     String? issue, {
     String? suggestion,
   }) {
-    if (issue == null || field.edited) return field;
+    // Re-validating an already validated result must not stack duplicates.
+    if (issue == null || field.edited || (field.issue?.contains(issue) ?? false)) {
+      return field;
+    }
     final combined = field.issue == null ? issue : '${field.issue}; $issue';
     return ExtractedField(
       value: field.value,

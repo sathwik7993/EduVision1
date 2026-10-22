@@ -1,11 +1,18 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../models/scan_result.dart';
 import '../services/recognition/mlkit_recognizer.dart';
+import '../services/recognition/onnx_recognizer.dart';
 import '../services/recognition/sheet_recognizer.dart';
+import '../services/roster_service.dart';
+import '../services/scan_validator.dart';
+import '../services/sheet_service.dart';
+import '../services/template_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass.dart';
 import 'review_page.dart';
@@ -23,7 +30,15 @@ class ScanPage extends StatefulWidget {
 // backgrounded: Android tears the camera down and the old code never rebuilt it.
 class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
   final ImagePicker _picker = ImagePicker();
-  final SheetRecognizer _recognizer = MlKitSheetRecognizer();
+  final SheetRecognizer _mlKit = MlKitSheetRecognizer();
+
+  /// Loaded only when the active template has field boxes. Null if the model
+  /// failed to load, in which case scanning falls back to ML Kit.
+  OnnxSheetRecognizer? _onnx;
+  SheetTemplate _template = SheetTemplate.defaults;
+
+  SheetRecognizer get _recognizer =>
+      _template.hasBoxes && _onnx != null ? _onnx! : _mlKit;
 
   CameraController? _controller;
   List<CameraDescription> _cameras = const [];
@@ -37,13 +52,34 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setUpCamera();
+    _loadEngine();
+  }
+
+  Future<void> _loadEngine() async {
+    final template = await TemplateStore.instance.active();
+    if (!mounted) return;
+    setState(() => _template = template);
+    if (!template.hasBoxes) return;
+    try {
+      final onnx = await OnnxSheetRecognizer.load();
+      if (!mounted) {
+        await onnx.dispose();
+        return;
+      }
+      setState(() => _onnx = onnx);
+    } on Object catch (e) {
+      // A missing or corrupt model must not take scanning down with it.
+      debugPrint('Field model failed to load: $e');
+      _toast('Handwriting model unavailable — using the printed-text reader.');
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controller?.dispose();
-    _recognizer.dispose();
+    _mlKit.dispose();
+    _onnx?.dispose();
     super.dispose();
   }
 
@@ -189,11 +225,55 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _process(String imagePath) async {
-    final ScanResult result;
+  /// ML Kit's document scanner: edge detection, perspective correction and
+  /// its own capture UI, all on-device. Needs Google Play services; without
+  /// them the in-app camera plus our own page alignment still works.
+  Future<void> _scanDocument() async {
+    if (_busy) return;
+    final scanner = DocumentScanner(
+      options: DocumentScannerOptions(
+        mode: ScannerMode.base,
+        pageLimit: 1,
+        isGalleryImport: true,
+      ),
+    );
     try {
-      result = await _recognizer.recognize(imagePath);
-    } on Exception catch (e) {
+      final scanned = await scanner.scanDocument();
+      final images = scanned.images ?? const [];
+      if (images.isEmpty) return;
+      setState(() => _busy = true);
+      await _process(images.first);
+    } on PlatformException catch (e) {
+      // Cancelling the scanner also lands here; only report real failures.
+      if (!(e.message ?? '').toLowerCase().contains('cancel')) {
+        _toast('Document scanner unavailable: ${e.message ?? e.code}');
+      }
+    } finally {
+      await scanner.close();
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _process(String imagePath) async {
+    final template = _template;
+    final recognizer = _recognizer;
+    final ScanResult validated;
+    final Roster roster;
+    final Set<String> saved;
+    try {
+      final result = await recognizer.recognize(imagePath, template: template);
+      roster = await RosterService.instance.load();
+      saved = {
+        for (final row in await SheetService.instance.readAll())
+          row.registrationNo.toUpperCase(),
+      };
+      validated = ScanValidator.validate(
+        result,
+        template,
+        roster: roster,
+        alreadySaved: saved,
+      );
+    } on Object catch (e) {
       _toast('Could not read the sheet: $e');
       return;
     }
@@ -201,17 +281,20 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
 
     // Every scan goes through review. Nothing is written to the workbook
     // straight from OCR any more.
-    final saved = await Navigator.of(context).push<bool>(
+    final committed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => ReviewPage(
-          result: result,
-          engineName: _recognizer.displayName,
-          engineReadsHandwriting: _recognizer.supportsHandwriting,
+          result: validated,
+          engineName: recognizer.displayName,
+          engineReadsHandwriting: recognizer.supportsHandwriting,
+          template: template,
+          roster: roster,
+          alreadySaved: saved,
         ),
       ),
     );
 
-    if (saved == true && mounted) {
+    if (committed == true && mounted) {
       _toast('Saved to the results sheet.');
     }
   }
@@ -254,8 +337,10 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
               'You can still import a photo from your gallery.',
           primaryLabel: 'Open settings',
           onPrimary: openAppSettings,
-          secondaryLabel: 'Pick from gallery',
-          onSecondary: _pickFromGallery,
+          // The document scanner runs in Play services' own activity and
+          // needs no camera permission from this app.
+          secondaryLabel: 'Use the document scanner',
+          onSecondary: _scanDocument,
         );
 
       case _CameraState.unavailable:
@@ -305,6 +390,18 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
               onTap: () => Navigator.of(context).maybePop(),
             ),
             const Spacer(),
+            // Which layout and engine this scan will use, so a wrong active
+            // template is noticed before the teacher scans a whole stack.
+            GlassBadge(
+              label: _template.hasBoxes
+                  ? _template.name
+                  : 'No template — printed text only',
+              color: _template.hasBoxes ? AppColors.primary : AppColors.inkMuted,
+              icon: Icons.grid_view_rounded,
+            ),
+            const Spacer(),
+            _CircleGlassButton(icon: Icons.help_outline, onTap: _showTips),
+            if (_state == _CameraState.ready) const SizedBox(width: AppSpacing.sm),
             if (_state == _CameraState.ready)
               _CircleGlassButton(
                 icon: _torchOn ? Icons.flash_on : Icons.flash_off,
@@ -341,8 +438,8 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
                 ),
                 _ShutterButton(onTap: _capture, enabled: !_busy),
                 _CircleGlassButton(
-                  icon: Icons.help_outline,
-                  onTap: _showTips,
+                  icon: Icons.crop_free_rounded,
+                  onTap: _scanDocument,
                 ),
               ],
             ),
@@ -370,6 +467,8 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
               const SizedBox(height: AppSpacing.md),
               ...[
                 'Lay the sheet flat and fill the frame with it.',
+                'The frame button opens the document scanner, which finds '
+                    'the page edges for you.',
                 'Avoid shadows — side lighting beats overhead light.',
                 'Hold steady until focus settles, then tap the shutter.',
                 'Tap anywhere on the preview to focus on that spot.',
@@ -562,7 +661,7 @@ class _ProcessingOverlay extends StatelessWidget {
               Text('Reading the sheet',
                   style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
-              const Text('Enhancing and scanning three passes',
+              const Text('Aligning the page and reading each field',
                   style: TextStyle(color: AppColors.inkMuted, fontSize: 13)),
             ],
           ),
