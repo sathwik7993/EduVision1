@@ -260,7 +260,6 @@ private fun FieldDialog(d: Draft, fields: List<TemplateField>, onDismiss: () -> 
     val taken = fields.map { it.kind }.toSet()
     var kind by remember {
         mutableStateOf(d.field?.kind ?: when {
-            FieldKind.REGISTRATION !in taken && d.rowCells >= 4 -> FieldKind.REGISTRATION
             FieldKind.REGISTRATION !in taken -> FieldKind.REGISTRATION
             FieldKind.PART_A !in taken -> FieldKind.PART_A
             FieldKind.PART_B !in taken -> FieldKind.PART_B
@@ -269,7 +268,12 @@ private fun FieldDialog(d: Draft, fields: List<TemplateField>, onDismiss: () -> 
     }
     var label by remember { mutableStateOf(d.field?.label.orEmpty()) }
     var max by remember { mutableStateOf(d.field?.maxMarks?.toString().orEmpty()) }
-    var wholeRow by remember { mutableStateOf(d.field == null && d.row != null && d.rowCells >= 4) }
+    // A row of boxes is one value for a registration number or code (one
+    // character per box), never for marks: a row of marks cells is separate fields.
+    fun rowByDefault(k: FieldKind) = d.field == null && d.row != null && d.rowCells >= 4 &&
+        (k == FieldKind.REGISTRATION || k == FieldKind.TEXT)
+    var wholeRow by remember { mutableStateOf(rowByDefault(kind)) }
+    androidx.compose.runtime.LaunchedEffect(kind) { wholeRow = rowByDefault(kind) }
     val named = kind == FieldKind.QUESTION || kind == FieldKind.MARK || kind == FieldKind.TEXT
     val number = kind != FieldKind.REGISTRATION && kind != FieldKind.TEXT
 
