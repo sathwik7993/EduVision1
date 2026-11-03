@@ -144,8 +144,20 @@ HERSHEY = [
 RENDER_H = 40  # render scale; the model sees height 32
 
 
+# Characters handwriting mixes up; over-sampled in single boxes, where the
+# app has no neighbouring characters to lean on (v4 read a "D" as "0" on 3 of
+# the 9 real sheets).
+CONFUSABLE = "0DOQ1IL7T5S2Z8B6G4AH9"
+
+
 def random_text(rng, kind=None) -> str:
     kind = kind or rng.choice(["mark", "reg", "free"], p=[0.45, 0.35, 0.20])
+    if kind == "char":
+        r = rng.random()
+        if r < 0.08:
+            return ""  # unfilled box
+        pool = CONFUSABLE if r < 0.45 else CHARSET
+        return pool[rng.integers(len(pool))]
     if kind == "mark":
         r = rng.random()
         if r < 0.06:
@@ -267,6 +279,39 @@ def _comb_ink(text: str, cells: int, bank: dict, rng):
     return ink, grid
 
 
+def _box_crop(text: str, bank: dict, rng):
+    """The inside of one printed box of a registration comb, cut out the way
+    the app does after finding the box borders: the crop may keep a sliver of
+    border at an edge, and a big letter can run past the box and be cut."""
+    ch = int(RENDER_H * rng.uniform(1.0, 1.3))
+    cw = int(ch * rng.uniform(0.75, 1.2))
+    b = max(4, ch // 4)
+    ink = np.zeros((ch + 2 * b, cw + 2 * b), np.float32)
+    grid = np.zeros_like(ink)
+    if text:
+        pool = bank[text]
+        g = _printed_ink(text, rng) if rng.random() < 0.08 else _glyph_ink(pool[rng.integers(len(pool))], rng, ch)
+        target = ch * rng.uniform(0.55, 1.15)
+        scale = target / g.shape[0]
+        g = cv2.resize(g, (max(2, int(g.shape[1] * scale)), max(2, int(g.shape[0] * scale))))
+        y = b + (ch - g.shape[0]) // 2 + int(rng.integers(-ch // 8, ch // 8 + 1))
+        x = b + (cw - g.shape[1]) // 2 + int(rng.integers(-cw // 8, cw // 8 + 1))
+        y0, x0 = max(0, y), max(0, x)
+        y1, x1 = min(ink.shape[0], y + g.shape[0]), min(ink.shape[1], x + g.shape[1])
+        if y1 > y0 and x1 > x0:
+            np.maximum(ink[y0:y1, x0:x1], g[y0 - y : y1 - y, x0 - x : x1 - x], out=ink[y0:y1, x0:x1])
+    elif rng.random() < 0.4:
+        inner = np.ascontiguousarray(ink[b:-b, b:-b])
+        _stray_marks(inner, rng)
+        ink[b:-b, b:-b] = inner
+    level, t = rng.uniform(0.4, 0.9), int(rng.integers(1, 3))
+    cv2.rectangle(grid, (b, b), (b + cw, b + ch), level, t)
+    # The app trims ~6% + 1 px inside the found borders; residuals either way.
+    ins = [int(round(rng.uniform(-0.06, 0.1) * ch)) + 1 for _ in range(4)]
+    sl = (slice(b + ins[0], b + ch - ins[1]), slice(b + ins[2], b + cw - ins[3]))
+    return ink[sl], grid[sl]
+
+
 def _stray_marks(ink: np.ndarray, rng):
     """Dots and short ticks examiners leave in otherwise empty cells."""
     h, w = ink.shape
@@ -286,7 +331,9 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True, layout: st
     cell with the digits floating in it), or "comb" (one character per printed
     box; `cells` boxes, of which the first len(text) are filled)."""
     grid = None
-    if layout == "comb":
+    if layout == "box":
+        ink, grid = _box_crop(text, bank, rng)
+    elif layout == "comb":
         ink, grid = _comb_ink(text, max(cells, len(text), 1), bank, rng)
     elif not text:
         ink = np.zeros((RENDER_H // 2, RENDER_H), np.float32)
@@ -305,7 +352,9 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True, layout: st
     # ROI margins: the teacher's box is never tight around the writing. A
     # marks-table cell can be several times wider than the digits in it.
     ih, iw = ink.shape
-    if layout == "comb":
+    if layout == "box":
+        top = bottom = left = right = 0  # already cut at the box
+    elif layout == "comb":
         top, bottom, left, right = (int(RENDER_H * rng.uniform(0.05, 0.4)) for _ in range(4))
     else:
         wide = 2.5 if layout == "cell" else 1.2
@@ -346,7 +395,7 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True, layout: st
     # these as a leading digit on every real sheet; they are never part of the
     # field.
     for margin, at_left in ((left, True), (right, False)):
-        if margin < 4 or rng.random() > 0.35:
+        if layout == "box" or margin < 4 or rng.random() > 0.35:
             continue
         frag = _printed_ink("".join(rng.choice(list(CHARSET + ".:-"), size=int(rng.integers(1, 4)))), rng)
         fh = min(h, max(4, int(ih * rng.uniform(0.5, 1.1))))
@@ -357,7 +406,7 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True, layout: st
         y = int(rng.integers(0, h - fh + 1))
         x = 0 if at_left else w - vis
         np.maximum(lines[y : y + fh, x : x + vis], frag * rng.uniform(0.6, 1.0), out=lines[y : y + fh, x : x + vis])
-    if 0 < len(text) <= 3 and rng.random() < 0.15:  # examiner circles the total
+    if layout != "box" and 0 < len(text) <= 3 and rng.random() < 0.15:  # examiner circles the total
         cv2.ellipse(
             lines, (left + iw // 2, top + ih // 2),
             (int(iw * rng.uniform(0.55, 0.8)) + 6, int(ih * rng.uniform(0.6, 0.9)) + 6),
@@ -371,7 +420,7 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True, layout: st
     gray = gray * (1 - ink_full) + ink_level * ink_full
 
     # Small alignment residual: rotation and shift of the whole crop.
-    if rng.random() < 0.7:
+    if layout != "box" and rng.random() < 0.7:
         m = cv2.getRotationMatrix2D((w / 2, h / 2), rng.uniform(-3, 3), 1.0)
         m[:, 2] += rng.uniform(-0.06, 0.06, size=2) * np.array([w, h])
         gray = cv2.warpAffine(gray, m, (w, h), borderMode=cv2.BORDER_REPLICATE)
@@ -387,8 +436,10 @@ def render_field(text: str, bank: dict, rng, exam_style: bool = True, layout: st
         gray = cv2.filter2D(gray, -1, kernel / max(kernel.sum(), 1e-6))
 
     gray = np.clip(gray, 0, 255).astype(np.uint8)
-    # Camera resolution: a field is often only 15-40 px tall in the photo.
-    scale = rng.uniform(18, 48) / h if rng.random() < 0.8 else 1.0
+    # Camera resolution: a field is often only 15-40 px tall in the photo
+    # (a comb box 12-35 px).
+    lo_px, hi_px = (12, 35) if layout == "box" else (18, 48)
+    scale = rng.uniform(lo_px, hi_px) / h if rng.random() < 0.8 else 1.0
     if scale < 1.0:
         gray = cv2.resize(gray, (max(4, int(w * scale)), max(4, int(h * scale))), interpolation=cv2.INTER_AREA)
     if rng.random() < 0.5:
@@ -521,6 +572,10 @@ class FieldStream(torch.utils.data.IterableDataset):
 
 def sample_field(bank, rng, kind=None, layout=None):
     """One training/eval example: (grayscale crop, label)."""
+    if kind is None and layout is None and rng.random() < 0.3:
+        kind, layout = "char", "box"  # the app reads a comb box by box
+    if kind == "char":
+        layout = "box"
     text = random_text(rng, kind)
     if layout is None:
         if len(text) >= 6 and rng.random() < 0.45:
@@ -565,6 +620,8 @@ def build_eval_sets(bank, n, seed=12345):
     sets["reg_exam"] = [sample_field(bank, rng, "reg", "free") for _ in range(n)]
     # One character per printed box; ~10% only partly filled in.
     sets["reg_comb"] = [sample_field(bank, rng, "reg", "comb") for _ in range(n)]
+    # One comb box at a time, as the app reads registration numbers.
+    sets["reg_box"] = [sample_field(bank, rng, "char", "box") for _ in range(n)]
     return sets
 
 
@@ -677,7 +734,7 @@ def main():
     val_rng = np.random.default_rng(999)
     val = []
     for i in range(100 if args.smoke else 600):
-        kind = ["mark", "reg", "free"][i % 3]
+        kind = ["mark", "reg", "free", "char"][i % 4]
         g, t = sample_field(train_bank, val_rng, kind)
         val.append((prep(g), t, DIGITS if kind == "mark" else CHARSET))
     print(f"data ready after {(time.time() - script_start) / 60:.1f} min", flush=True)

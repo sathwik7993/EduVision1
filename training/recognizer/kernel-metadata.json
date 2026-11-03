@@ -1,6 +1,6 @@
 {
-  "id": "sathwikchappala/eduvision-field-recognizer-v4",
-  "title": "eduvision-field-recognizer-v4",
+  "id": "sathwikchappala/eduvision-field-recognizer-v5",
+  "title": "eduvision-field-recognizer-v5",
   "code_file": "eduvision_recognizer.py",
   "language": "python",
   "kernel_type": "script",
@@ -8,8 +8,12 @@
   "enable_gpu": true,
   "enable_tpu": false,
   "enable_internet": true,
-  "dataset_sources": ["crawford/emnist", "sathwikchappala/eduvision-field-recognizer-v3-output"],
+  "dataset_sources": [
+    "crawford/emnist"
+  ],
   "competition_sources": [],
-  "kernel_sources": [],
+  "kernel_sources": [
+    "sathwikchappala/eduvision-field-recognizer-v4"
+  ],
   "model_sources": []
 }
