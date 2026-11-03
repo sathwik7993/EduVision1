@@ -43,9 +43,15 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
         dict = rec.metadata.customMetadata["character"]!!.lines() + " "
     }
 
-    fun read(gray: Mat): List<TextLine> = detect(gray).let { boxes -> boxes.zip(recognize(gray, boxes)) }
-        .filter { it.second.isNotBlank() }
-        .map { TextLine(it.second, it.first) }
+    /**
+     * Printed lines that can be field labels. Lines much wider than a label
+     * (instruction sentences) are skipped: recognising them is most of the
+     * cost on a slow phone and they never name a field.
+     */
+    fun read(gray: Mat, maxAspect: Double = MAX_LABEL_ASPECT): List<TextLine> {
+        val boxes = detect(gray).filter { it.w <= maxAspect * it.h }
+        return boxes.zip(recognize(gray, boxes)).filter { it.second.isNotBlank() }.map { TextLine(it.second, it.first) }
+    }
 
     /** DB text detection on a page scaled to at most [DET_SIDE] px. */
     fun detect(gray: Mat): List<Box> {
@@ -158,6 +164,9 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
 
     companion object {
         const val DET_SIDE = 960
+
+        /** "Registered No." is ~7x as wide as tall; a sentence is 20-40x. */
+        const val MAX_LABEL_ASPECT = 14.0
         const val REC_HEIGHT = 48
         const val REC_MAX_WIDTH = 640
     }
