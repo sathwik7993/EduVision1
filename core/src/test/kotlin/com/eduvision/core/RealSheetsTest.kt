@@ -38,7 +38,7 @@ class RealSheetsTest {
             nu.pattern.OpenCV.loadLocally()
             val models = File(root, "assets/models")
             text = PrintedTextReader(File(models, "ppocr_v3_det.onnx").readBytes(), File(models, "ppocr_v3_rec.onnx").readBytes())
-            reader = SheetReader(FieldModel(File(models, "field_recognizer_v2.onnx").readBytes())) { text }
+            reader = SheetReader(FieldModel((System.getenv("FIELD_MODEL")?.let(::File) ?: File(models, "field_recognizer_v3.onnx")).readBytes())) { text }
         }
 
         fun gray(name: String): Mat = Imgcodecs.imread(File(root, "sample_images/$name").path, Imgcodecs.IMREAD_GRAYSCALE)
@@ -115,7 +115,7 @@ class RealSheetsTest {
         println("RESULT right $right/$total, registration $regRight/9, silent errors $silent, ms/sheet median ${times.sorted()[times.size / 2]}")
         // Wrong values must never pass without review.
         assertEquals(0, silent)
-        assertTrue("right $right/$total", right >= 27)
-        assertTrue("registration $regRight/9", regRight >= 5)
+        assertTrue("right $right/$total", right >= 32)
+        assertTrue("registration $regRight/9", regRight >= 8)
     }
 }

@@ -49,7 +49,7 @@ class DeviceBenchmarkTest {
 
         assertTrue(OpenCVLoader.initLocal())
         report("load_opencv_ms", lap())
-        val fieldModel = FieldModel(model("field_recognizer_v2.onnx"), threads = 2)
+        val fieldModel = FieldModel(model("field_recognizer_v3.onnx"), threads = 2)
         report("load_field_model_ms", lap())
         val text = PrintedTextReader(model("ppocr_v3_det.onnx"), model("ppocr_v3_rec.onnx"),
             Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
