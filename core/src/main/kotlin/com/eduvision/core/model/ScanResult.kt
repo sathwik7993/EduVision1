@@ -66,12 +66,19 @@ data class LabelledMark(
     val part: String,
     val field: ExtractedField,
     val maxMarks: Int? = null,
+    /**
+     * False for words and ticked options (names, branch, programme): shown
+     * for checking when doubtful, but they never hold up saving the marks.
+     */
+    val blocking: Boolean = true,
 ) {
     val value get() = field.value.trim().toIntOrNull() ?: 0
 
     /** A confidently blank cell is normal: examiners often fill only the totals. */
-    val needsReview get() = !field.edited &&
+    val doubtful get() = !field.edited &&
         (field.issue != null || field.confidence < ExtractedField.TRUSTED_ABOVE)
+
+    val needsReview get() = blocking && doubtful
 }
 
 /** One scanned sheet, before it is committed to the workbook. */

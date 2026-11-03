@@ -110,12 +110,18 @@ fun ReviewScreen(app: EduApp, scan: ScanViewModel, onDone: () -> Unit) {
             r.writtenTotals.forEachIndexed { i, m ->
                 MarkCard(m) { v -> scan.edit { res -> res.copy(writtenTotals = res.writtenTotals.toMutableList().also { it[i] = it[i].copy(field = v) }) } }
             }
-            val textLabels = t.fields.filter { it.kind == com.eduvision.core.model.FieldKind.TEXT }.map { it.title }.toSet()
+            val byTitle = t.fields.associateBy { it.title }
             r.extras.forEachIndexed { i, m ->
-                MarkCard(m, text = m.label in textLabels) { v -> scan.edit { res -> res.copy(extras = res.extras.toMutableList().also { it[i] = it[i].copy(field = v) }) } }
+                val f = byTitle[m.label]
+                val set: (ExtractedField) -> Unit = { v -> scan.edit { res -> res.copy(extras = res.extras.toMutableList().also { it[i] = it[i].copy(field = v) }) } }
+                when (f?.kind) {
+                    com.eduvision.core.model.FieldKind.CHOICE -> ChoiceCard(m, f.options, set)
+                    com.eduvision.core.model.FieldKind.TEXT -> FieldCard(m.label, m.field, text = true, free = true, blankOk = true, onChange = set)
+                    else -> MarkCard(m, onChange = set)
+                }
             }
-            r.questions.forEachIndexed { i, m ->
-                MarkCard(m) { v -> scan.edit { res -> res.copy(questions = res.questions.toMutableList().also { it[i] = it[i].copy(field = v) }) } }
+            if (r.questions.isNotEmpty()) QuestionGrid(r.questions) { i, v ->
+                scan.edit { res -> res.copy(questions = res.questions.toMutableList().also { it[i] = it[i].copy(field = v) }) }
             }
 
             if (t.field(com.eduvision.core.model.FieldKind.PART_A) != null || t.field(com.eduvision.core.model.FieldKind.PART_B) != null) Card(Modifier.fillMaxWidth()) {
@@ -184,6 +190,63 @@ private fun NewLayoutCard(name: String, isNew: Boolean, reading: String, aMax: I
     }
 }
 
+/** Ticked option: the reading, and every option to pick from. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ChoiceCard(m: LabelledMark, options: List<String>, onChange: (ExtractedField) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (m.doubtful) Icons.Default.Warning else Icons.Default.CheckCircle, null, tint = if (m.doubtful) Warn else Good)
+                Spacer(Modifier.width(8.dp))
+                Text(m.label, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Text(if (m.field.edited) "confirmed" else if (m.field.value.isEmpty()) "nothing ticked?" else "ticked",
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            m.field.crop?.let { png ->
+                val bmp = remember(png) { BitmapFactory.decodeByteArray(png, 0, png.size)?.asImageBitmap() }
+                bmp?.let { Image(it, null, Modifier.fillMaxWidth().heightIn(max = 56.dp).background(Color.White, RoundedCornerShape(6.dp)), contentScale = ContentScale.Fit) }
+            }
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                options.forEach { o ->
+                    androidx.compose.material3.FilterChip(m.field.value == o, { onChange(ExtractedField.manual(o, m.field.crop)) }, label = { Text(o) })
+                }
+            }
+        }
+    }
+}
+
+/** All question marks in one compact grid; doubtful cells outlined in amber. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun QuestionGrid(qs: List<LabelledMark>, onChange: (Int, ExtractedField) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val doubtful = qs.count { it.doubtful }
+            Text("Question marks" + if (doubtful > 0) " ($doubtful to check)" else "", style = MaterialTheme.typography.titleSmall)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                qs.forEachIndexed { i, q ->
+                    OutlinedTextField(
+                        q.field.value,
+                        { v -> onChange(i, ExtractedField.manual(v.filter(Char::isDigit), q.field.crop)) },
+                        label = { Text(q.label) }, singleLine = true,
+                        isError = q.doubtful,
+                        modifier = Modifier.width(76.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                }
+            }
+            for ((i, q) in qs.withIndex()) {
+                if (!q.doubtful) continue
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${q.label}: ${q.field.issue ?: "not sure"}", Modifier.weight(1f), color = Warn, style = MaterialTheme.typography.bodySmall)
+                    TextButton({ onChange(i, ExtractedField.manual(q.field.value, q.field.crop)) }) { Text("OK") }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun MarkCard(m: LabelledMark, text: Boolean = false, onChange: (ExtractedField) -> Unit) =
     FieldCard(m.label + (m.maxMarks?.let { " (max $it)" } ?: ""), m.field, text = text, blankOk = true, onChange = onChange)
@@ -198,6 +261,7 @@ fun FieldCard(
     title: String,
     field: ExtractedField,
     text: Boolean = false,
+    free: Boolean = false,
     blankOk: Boolean = false,
     testTag: String = title,
     onChange: (ExtractedField) -> Unit,
@@ -227,13 +291,13 @@ fun FieldCard(
             }
             OutlinedTextField(
                 field.value,
-                { v -> onChange(ExtractedField.manual(if (text) v.uppercase().filter { it.isLetterOrDigit() } else v.filter(Char::isDigit), field.crop)) },
+                { v -> onChange(ExtractedField.manual(when { free -> v; text -> v.uppercase().filter { it.isLetterOrDigit() }; else -> v.filter(Char::isDigit) }, field.crop)) },
                 singleLine = true,
                 textStyle = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace),
                 modifier = Modifier.fillMaxWidth().testTag(testTag),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = if (text) KeyboardType.Ascii else KeyboardType.Number,
-                    capitalization = KeyboardCapitalization.Characters,
+                    capitalization = if (free) KeyboardCapitalization.Words else KeyboardCapitalization.Characters,
                 ),
                 placeholder = { Text(if (blankOk) "blank" else "") },
             )

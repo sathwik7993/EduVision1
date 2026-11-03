@@ -20,8 +20,11 @@ enum class FieldKind(val label: String) {
     /** Any other number the teacher wants as a column ("Internal marks"). */
     MARK("Other number"),
 
-    /** Any other letters/digits the teacher wants as a column ("Subject code"). */
+    /** Any other writing the teacher wants as a column ("Name", "Branch"). */
     TEXT("Other text"),
+
+    /** One of printed options ticked or circled ("B.Tech / M.Tech / MBA"). */
+    CHOICE("Ticked option"),
 }
 
 /** A box normalised to the template's reference image (0..1 on both axes). */
@@ -50,6 +53,14 @@ data class TemplateField(
      * mask, when set, fixes this to the mask's length.
      */
     val cells: Int = 0,
+    /**
+     * Written on a line or in open space, not inside a printed box: read
+     * where it is, without snapping to a cell.
+     */
+    val free: Boolean = false,
+    /** CHOICE: the printed options, and where each sits on the reference. */
+    val options: List<String> = emptyList(),
+    val optionBoxes: List<NormBox> = emptyList(),
 ) {
     val title: String
         get() = when {
