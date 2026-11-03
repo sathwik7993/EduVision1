@@ -93,6 +93,45 @@ def sheet(reg, part_a, part_b, seed=1):
     return img
 
 
+def sheet_b(reg, sec_a, sec_b, internal, seed=1):
+    """A second, different layout: the number goes in boxes UNDER its label,
+    the marks in a table whose column headings are the labels, other wording."""
+    rng = np.random.default_rng(seed)
+    img = np.full((H, W, 3), 248, np.uint8)
+    ink = (90, 60, 20)  # dark blue print
+    text(img, "GREENFIELD UNIVERSITY", 330, 120, 1.4, FB, ink, 3)
+    text(img, "Semester End Examination - Answer Script", 300, 175, 0.9, F, ink, 2)
+    cv2.rectangle(img, (60, 220), (1180, 520), ink, 2)
+    text(img, "Hall Ticket No.", 90, 280, 0.85, FB, ink)
+    x0, y0, bw, bh = 90, 300, 54, 62
+    for i in range(11):
+        cv2.line(img, (x0 + i * bw, y0), (x0 + i * bw, y0 + bh), ink, 2)
+    cv2.rectangle(img, (x0, y0), (x0 + 10 * bw, y0 + bh), ink, 2)
+    for i, ch in enumerate(reg):
+        hand(img, ch, x0 + i * bw + 13, y0 + 47, 1.3, rng)
+    text(img, "Course Code :", 720, 280, 0.8, F, ink)
+    text(img, "Name of the Course :", 90, 430, 0.8, F, ink)
+    text(img, "Date of Exam :", 720, 430, 0.8, F, ink)
+    for i, l in enumerate(["Answer all questions in the space provided.",
+                           "Do not write your name anywhere in the script.",
+                           "Mobile phones are strictly prohibited."]):
+        text(img, l, 90, 620 + i * 40, 0.65, F, (70, 70, 70), 1)
+    text(img, "FOR OFFICE USE", 470, 1180, 0.8, FB, ink)
+    heads = ["Section A", "Section B", "Internal", "Total Marks"]
+    left, top, cw, hh, vh = 140, 1210, 240, 60, 110
+    for i in range(len(heads) + 1):
+        cv2.line(img, (left + i * cw, top), (left + i * cw, top + hh + vh), ink, 2)
+    for y in (top, top + hh, top + hh + vh):
+        cv2.line(img, (left, y), (left + len(heads) * cw, y), ink, 2)
+    for i, h_ in enumerate(heads):
+        text(img, h_, left + i * cw + 30, top + 40, 0.8, FB, ink)
+    vals = [sec_a, sec_b, internal, str(int(sec_a) + int(sec_b))]
+    for i, v in enumerate(vals):
+        hand(img, v, left + i * cw + 80, top + hh + 75, 1.7, rng)
+    text(img, "Examiner's Signature", 800, 1560, 0.7, F, (70, 70, 70), 1)
+    return img
+
+
 def photo(img, seed):
     """Perspective, rotation, uneven light, blur and JPEG, like a phone shot."""
     rng = np.random.default_rng(seed)
@@ -124,4 +163,13 @@ if __name__ == "__main__":
         cv2.imwrite(os.path.join(out, name), photo(sheet(reg, a, b, seed=i), seed=100 + i))
         truth[name] = {"registration": reg, "partA": a, "partB": b}
     json.dump(truth, open(os.path.join(out, "truth.json"), "w"), indent=2)
+    # Layout B
+    b_students = [("19K41A0233", "22", "45", "18"), ("19K41A0251", "30", "38", "20"), ("19K41A02D7", "15", "50", "16")]
+    cv2.imwrite(os.path.join(out, "b_sheet_clean.png"), sheet_b(*b_students[0], seed=0))
+    truth_b = {}
+    for i, (reg, a, b, internal) in enumerate(b_students, 1):
+        name = f"b_photo_{i}.jpg"
+        cv2.imwrite(os.path.join(out, name), photo(sheet_b(reg, a, b, internal, seed=10 + i), seed=200 + i))
+        truth_b[name] = {"registration": reg, "partA": a, "partB": b, "internal": internal}
+    json.dump(truth_b, open(os.path.join(out, "truth_b.json"), "w"), indent=2)
     print("wrote", out)

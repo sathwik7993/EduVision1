@@ -16,6 +16,12 @@ enum class FieldKind(val label: String) {
      * only cross-checked against Part-A + Part-B.
      */
     WRITTEN_TOTAL("Grand total"),
+
+    /** Any other number the teacher wants as a column ("Internal marks"). */
+    MARK("Other number"),
+
+    /** Any other letters/digits the teacher wants as a column ("Subject code"). */
+    TEXT("Other text"),
 }
 
 /** A box normalised to the template's reference image (0..1 on both axes). */
@@ -30,22 +36,25 @@ data class NormBox(val left: Double, val top: Double, val right: Double, val bot
 data class TemplateField(
     val kind: FieldKind,
     val box: NormBox,
-    /** Question label ("Q1", "3b"); empty for the other kinds. */
+    /**
+     * Question label ("Q1", "3b"), or the column name of a MARK/TEXT field;
+     * optional for the other kinds.
+     */
     val label: String = "",
     /** Which part a question belongs to: "A" or "B". */
     val part: String = "A",
     val maxMarks: Int? = null,
     /**
-     * Printed boxes in a registration comb (one character each); 0 for a
-     * single free-writing box. The template's registration mask, when set,
-     * fixes this to the mask's length.
+     * Printed boxes in a comb (one character each), e.g. a registration
+     * number; 0 for a single box. For the registration number the template's
+     * mask, when set, fixes this to the mask's length.
      */
     val cells: Int = 0,
 ) {
     val title: String
         get() = when {
             kind == FieldKind.QUESTION -> "${label.ifEmpty { "Question" }} (Part-$part)"
-            kind == FieldKind.WRITTEN_TOTAL && label.isNotEmpty() -> label
+            label.isNotEmpty() && kind != FieldKind.QUESTION -> label
             else -> kind.label
         }
 }
@@ -55,9 +64,10 @@ data class TemplateField(
  *
  * A template is a reference photo of the layout plus field boxes on it. Later
  * photos are registered onto the reference by matching image features, so no
- * text recognition runs on a normal scan. The first scan of an unknown layout
- * creates the template automatically from the printed labels
- * ([com.eduvision.core.recog.LayoutFinder]); the teacher can adjust it.
+ * text recognition runs on a normal scan. A new layout is set up from one
+ * sample sheet: the app suggests fields from the printed labels
+ * ([com.eduvision.core.recog.FieldSuggester]) and the teacher taps the boxes
+ * they want ([com.eduvision.core.recog.CellFinder.boxAt]).
  */
 @Serializable
 data class SheetTemplate(

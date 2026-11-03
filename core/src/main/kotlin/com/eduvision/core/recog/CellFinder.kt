@@ -173,6 +173,117 @@ object CellFinder {
         return if (even && cells in 4..16) cells else 0
     }
 
+    /**
+     * What the teacher tapped at [x],[y] on a reference image: the printed box
+     * enclosing that point, and, when that box is one of a row of equal boxes
+     * (a registration-number comb, or a marks-table row), the whole row and
+     * its box count. Null when the point is not inside an enclosed box
+     * (writing on a line): the teacher then draws the box instead.
+     */
+    data class Picked(val cell: Box, val row: Box?, val rowCells: Int)
+
+    /** Printed rules (dilated), 255 on 0, from an ink mask; [k] = minimum rule length. */
+    internal fun ruleMask(th: Mat, k: Int): Mat {
+        // Photos are slightly rotated: thicken across the line direction first
+        // so a tilted rule survives the straight-line opening.
+        val thx = Mat(); val thy = Mat()
+        Imgproc.dilate(th, thx, Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 1.0)))
+        Imgproc.dilate(th, thy, Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(1.0, 3.0)))
+        val hz = open(thy, k, 1)
+        val v = printedVerticals(open(thx, 1, k / 2), hz)
+        thx.release(); thy.release()
+        val lines = Mat()
+        Core.bitwise_or(v, hz, lines)
+        Imgproc.dilate(lines, lines, Mat.ones(3, 3, CvType.CV_8U))
+        v.release(); hz.release()
+        return lines
+    }
+
+
+    /**
+     * Keeps the vertical strokes that run from one printed horizontal rule to
+     * another: box dividers do, a handwritten "1" or the legs of an "H" do not.
+     */
+    private fun printedVerticals(v: Mat, hz: Mat): Mat {
+        val near = Mat()
+        Imgproc.dilate(hz, near, Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(7.0, 9.0)))
+        val labels = Mat(); val stats = Mat(); val cents = Mat()
+        val n = Imgproc.connectedComponentsWithStats(v, labels, stats, cents, 8)
+        val out = Mat.zeros(v.size(), CvType.CV_8U)
+        for (i in 1 until n) {
+            val x = stats.get(i, Imgproc.CC_STAT_LEFT)[0].toInt(); val y = stats.get(i, Imgproc.CC_STAT_TOP)[0].toInt()
+            val w = stats.get(i, Imgproc.CC_STAT_WIDTH)[0].toInt(); val h = stats.get(i, Imgproc.CC_STAT_HEIGHT)[0].toInt()
+            fun touches(row: Int) = row in 0 until near.rows() &&
+                Core.countNonZero(near.submat(Rect(x, row, w, 1))) > 0
+            // A rule cut by the edge of the search window continues beyond it.
+            if ((y <= 1 || touches(y)) && (y + h >= near.rows() - 1 || touches(y + h - 1))) {
+                val mask = Mat()
+                Core.compare(labels, org.opencv.core.Scalar(i.toDouble()), mask, Core.CMP_EQ)
+                out.setTo(org.opencv.core.Scalar(255.0), mask)
+                mask.release()
+            }
+        }
+        listOf(near, labels, stats, cents).forEach { it.release() }
+        return out
+    }
+
+    fun boxAt(page: Mat, x: Double, y: Double): Picked? {
+        val w = page.cols(); val h = page.rows()
+        // Wide enough for a whole registration comb starting at the tap.
+        val wx0 = (x - 0.55 * w).toInt().coerceIn(0, w - 1)
+        val wx1 = (x + 0.55 * w).toInt().coerceIn(wx0 + 1, w)
+        val wy0 = (y - 0.1 * h).toInt().coerceIn(0, h - 1)
+        val wy1 = (y + 0.1 * h).toInt().coerceIn(wy0 + 1, h)
+        val win = page.submat(Rect(wx0, wy0, wx1 - wx0, wy1 - wy0))
+        val th = ink(win)
+        // Printed rules are long and straight; handwriting strokes are short.
+        val k = max(12, (0.03 * w).toInt())
+        val lines = ruleMask(th, k)
+        val free = Mat()
+        Core.bitwise_not(lines, free)
+        val labels = Mat(); val stats = Mat(); val cents = Mat()
+        val n = Imgproc.connectedComponentsWithStats(free, labels, stats, cents, 4)
+        val px = (x - wx0).toInt().coerceIn(0, win.cols() - 1)
+        val py = (y - wy0).toInt().coerceIn(0, win.rows() - 1)
+        // A tap on a rule picks the nearest box around it.
+        var id = labels.get(py, px)[0].toInt()
+        var r = 2
+        while (id == 0 && r <= 16) {
+            id = listOf(-r to 0, r to 0, 0 to -r, 0 to r).map { (dx, dy) ->
+                labels.get((py + dy).coerceIn(0, win.rows() - 1), (px + dx).coerceIn(0, win.cols() - 1))[0].toInt()
+            }.firstOrNull { it > 0 } ?: 0
+            r += 2
+        }
+        fun boxOf(i: Int): Box? {
+            val bx = stats.get(i, Imgproc.CC_STAT_LEFT)[0]; val by = stats.get(i, Imgproc.CC_STAT_TOP)[0]
+            val bw = stats.get(i, Imgproc.CC_STAT_WIDTH)[0]; val bh = stats.get(i, Imgproc.CC_STAT_HEIGHT)[0]
+            val area = stats.get(i, Imgproc.CC_STAT_AREA)[0]
+            // Enclosed: does not touch the search window, and fills its bounding box.
+            if (bx <= 0 || by <= 0 || bx + bw >= win.cols() || by + bh >= win.rows()) return null
+            if (bw < 8 || bh < 8 || area < 0.6 * bw * bh) return null
+            return Box(bx + wx0, by + wy0, bx + bw + wx0, by + bh + wy0)
+        }
+        val cell = if (id > 0) boxOf(id) else null
+        var picked: Picked? = null
+        if (cell != null) {
+            // Neighbours of the same size on the same row, touching across one rule.
+            val boxes = (1 until n).filter { it != id }.mapNotNull(::boxOf)
+            val gap = 0.25 * cell.h + 6
+            fun next(from: Box, dir: Int) = boxes.firstOrNull { b ->
+                abs(b.y0 - from.y0) < 0.2 * from.h && abs(b.h - from.h) < 0.2 * from.h &&
+                    abs(b.w - cell.w) < 0.3 * cell.w &&
+                    (if (dir > 0) b.x0 - from.x1 else from.x0 - b.x1) in -2.0..gap
+            }
+            val row = mutableListOf(cell)
+            while (true) row.add(next(row.last(), 1) ?: break)
+            while (true) row.add(0, next(row.first(), -1) ?: break)
+            picked = if (row.size >= 3) Picked(cell, Box(row.first().x0, row.minOf { it.y0 }, row.last().x1, row.maxOf { it.y1 }), row.size)
+            else Picked(cell, null, 1)
+        }
+        listOf(th, lines, free, labels, stats, cents).forEach { it.release() }
+        return picked
+    }
+
     private fun profile(m: Mat, byRow: Boolean): DoubleArray {
         val r = Mat()
         Core.reduce(m, r, if (byRow) 1 else 0, Core.REDUCE_SUM, CvType.CV_64F)
