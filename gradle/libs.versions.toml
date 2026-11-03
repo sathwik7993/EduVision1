@@ -1,12 +1,12 @@
 [versions]
 agp = "8.13.2"
-kotlin = "2.2.21"
+kotlin = "2.3.21"
 # Same Java API on both sides: the JVM artifact runs the core tests on the host,
 # the Android artifact ships in the app.
 onnxruntime = "1.22.0"
 opencvAndroid = "4.10.0"
 opencvJvm = "4.9.0-0"
-composeBom = "2026.09.00"
+composeBom = "2026.03.01"
 firebaseBom = "35.1.0"
 
 [libraries]
@@ -25,18 +25,17 @@ compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-material-icons = { module = "androidx.compose.material:material-icons-extended" }
-activity-compose = { module = "androidx.activity:activity-compose", version = "1.13.0" }
-navigation-compose = { module = "androidx.navigation:navigation-compose", version = "2.10.2" }
+activity-compose = { module = "androidx.activity:activity-compose", version = "1.12.4" }
+navigation-compose = { module = "androidx.navigation:navigation-compose", version = "2.9.8" }
 lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version = "2.9.4" }
-camera-camera2 = { module = "androidx.camera:camera-camera2", version = "1.6.2" }
-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version = "1.6.2" }
-camera-view = { module = "androidx.camera:camera-view", version = "1.6.2" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version = "2.9.4" }
 mlkit-docscanner = { module = "com.google.android.gms:play-services-mlkit-document-scanner", version = "16.0.0" }
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 firebase-auth = { module = "com.google.firebase:firebase-auth" }
 credentials = { module = "androidx.credentials:credentials", version = "1.6.0" }
 credentials-play = { module = "androidx.credentials:credentials-play-services-auth", version = "1.6.0" }
 googleid = { module = "com.google.android.libraries.identity.googleid:googleid", version = "1.2.1" }
+exifinterface = { module = "androidx.exifinterface:exifinterface", version = "1.4.1" }
 robolectric = { module = "org.robolectric:robolectric", version = "4.16" }
 androidx-test-core = { module = "androidx.test:core", version = "1.7.0" }
 androidx-test-runner = { module = "androidx.test:runner", version = "1.7.0" }

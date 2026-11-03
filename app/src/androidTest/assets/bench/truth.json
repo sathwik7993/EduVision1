@@ -1,0 +1,22 @@
+{
+  "photo_1.jpg": {
+    "registration": "21B81A0512",
+    "partA": "34",
+    "partB": "52"
+  },
+  "photo_2.jpg": {
+    "registration": "21B81A0577",
+    "partA": "18",
+    "partB": "47"
+  },
+  "photo_3.jpg": {
+    "registration": "21B81A05C3",
+    "partA": "40",
+    "partB": "60"
+  },
+  "photo_4.jpg": {
+    "registration": "21B81A0590",
+    "partA": "27",
+    "partB": "39"
+  }
+}
