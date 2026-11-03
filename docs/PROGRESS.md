@@ -44,6 +44,18 @@ one tapped custom field (`NewLayoutTest`); taps snap to the printed box on
 three real photos (`TapSelectTest`); the editor flow on a device
 (`LayoutSetupUiTest`, Test Lab).
 
+## Every field on the sheet (0.4.0)
+
+`FormFinder` also finds, from the same sample sheet: each cell of a marks
+table (named by its heading: question number, Part-A/B Total, GRAND TOTAL;
+struck columns skipped), every "label : writing" line (Name, Branch,
+Section, Course, Date, or any colon label; read with the printed-text
+model), and tick choices ("B.Tech / M.Tech / MBA", "I / II / III / IV";
+the option under the tick). Handwritten words and ticks are shown for
+checking but do not block saving; every field is an Excel column. On the
+owner's Assignment Booklet photo (kept out of the repo) all 17 fields were
+found and 13 read right on the first scan, the other 4 flagged.
+
 ## Architecture
 
 ```
@@ -133,7 +145,13 @@ The Flutter app took 10-15 s per scan on the phone. Phones: see below.
 | Samsung Galaxy A03s (SM-A037U, API 33, entry level) | 1647 ms (1.1-1.7 s) | 15.2 s | 12/12 |
 | TECNO POP 7 (API 31) | Test Lab infrastructure error, no result | | |
 | Samsung Galaxy A14 (API 34) | no device available during the run | | |
-| Virtual Arm phone (MediumPhone.arm, API 34) | 142 ms | 4.2 s | 12/12 |
+| Virtual Arm phone (MediumPhone.arm, API 34), 0.3.0, 4 fields | 142 ms | 4.2 s | 12/12 |
+| Virtual Arm phone, 0.4.0, all 21 fields of the synthetic sheet | 422 ms | 8.0 s | 12/12 |
+
+0.4.0 reads every field (questions, text lines, ticks), not just four, and
+looks for printed text at a larger working size; both cost time. Still well
+under the 2 s target on this device; the entry-level Galaxy A03s has not been
+re-measured with 0.4.0.
 
 `LayoutSetupUiTest` (tap a box, name it, save) passes on the virtual phone.
 It caught a bug fixed in the same session: a tapped marks cell that sits in
