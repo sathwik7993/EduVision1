@@ -55,7 +55,8 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a", "x86_64")
-            isUniversalApk = false
+            // The universal APK is for device farms that need one file for all phones.
+            isUniversalApk = true
         }
     }
 

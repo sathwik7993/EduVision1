@@ -129,7 +129,7 @@ class Scanner(private val context: Context, private val templates: TemplateStore
     private fun ScanResult.withDecode(ms: Long) = copy(timingsMs = linkedMapOf("decode" to ms) + timingsMs)
 
     companion object {
-        const val MODEL = "field_recognizer_v2.onnx"
+        const val MODEL = "field_recognizer_v3.onnx"
         private const val MAX_SIDE = 2400
 
         /** 8-bit grayscale, upright (EXIF applied), longer side at most 2400 px. */
