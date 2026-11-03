@@ -78,6 +78,8 @@ data class ScanResult(
     val partB: ExtractedField,
     val questions: List<LabelledMark> = emptyList(),
     val writtenTotals: List<LabelledMark> = emptyList(),
+    /** The teacher's own fields (MARK / TEXT kinds), one column each. */
+    val extras: List<LabelledMark> = emptyList(),
     val imagePath: String? = null,
     /** How the photo was registered onto the template, for the review screen. */
     val alignment: String = "",
@@ -94,13 +96,13 @@ data class ScanResult(
 
     val isReadyToSave
         get() = !registrationNo.needsReview && !partA.needsReview && !partB.needsReview &&
-            (questions + writtenTotals).none { it.needsReview } && registrationNo.value.isNotBlank()
+            (questions + writtenTotals + extras).none { it.needsReview } && registrationNo.value.isNotBlank()
 
     val fieldsNeedingReview: List<String>
         get() = buildList {
             if (registrationNo.needsReview) add("Registration No")
             if (partA.needsReview) add("Part-A")
             if (partB.needsReview) add("Part-B")
-            (questions + writtenTotals).filter { it.needsReview }.forEach { add(it.label) }
+            (questions + writtenTotals + extras).filter { it.needsReview }.forEach { add(it.label) }
         }
 }

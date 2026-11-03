@@ -45,21 +45,31 @@ class SheetReader(
     class NewLayout(val template: SheetTemplate, val reference: Mat)
 
     /**
-     * Builds a template from the printed labels in [photo]. Null when the
-     * labels are not found (an unknown layout: boxes must be drawn).
+     * A new template for the layout in [photo]: the photo becomes the
+     * reference image, and the fields the printed labels point to are
+     * suggested. The fields can be empty (labels not recognised); the teacher
+     * then taps the boxes they want.
      */
-    fun createTemplate(photo: Mat, id: String, name: String): NewLayout? {
+    fun createTemplate(photo: Mat, id: String, name: String): NewLayout {
         val reference = Aligner.downscale(photo, REFERENCE_SIDE)
-        val found = LayoutFinder.locate(textReader().read(reference))
-        if (found.isEmpty()) return null
-        val w = reference.cols().toDouble()
-        val h = reference.rows().toDouble()
-        val fields = found.map { (kind, b) ->
+        val lines = textReader().read(reference)
+        val found = LinkedHashMap<FieldKind, Pair<Box, Int>>()
+        FieldSuggester.suggest(reference, lines).forEach { found[it.kind] = it.box to it.cells }
+        // Labels next to boxes without a closed border (cut-off photos): fixed
+        // offsets from the label, measured on the CAT answer book.
+        LayoutFinder.locate(lines).forEach { (kind, b) ->
+            if (kind in found) return@forEach
             val cells = if (kind == FieldKind.REGISTRATION) {
                 val (patch, pb) = CellFinder.warpPatch(reference, identity(), b, scaleFor(b), 0.5)
                 CellFinder.countCombCells(patch, pb).also { patch.release() }
             } else 0
-            TemplateField(kind, NormBox(b.x0 / w, b.y0 / h, b.x1 / w, b.y1 / h), cells = cells)
+            found[kind] = b to cells
+        }
+        val w = reference.cols().toDouble()
+        val h = reference.rows().toDouble()
+        val fields = found.map { (kind, v) ->
+            val b = v.first
+            TemplateField(kind, NormBox(b.x0 / w, b.y0 / h, b.x1 / w, b.y1 / h), cells = v.second)
         }
         return NewLayout(SheetTemplate(id = id, name = name, fields = fields, auto = true), reference)
     }
@@ -147,14 +157,17 @@ class SheetReader(
         }
         val (patch, pb) = CellFinder.warpPatch(photo, h, box, scaleFor(box), 0.5)
         try {
-            val cells = t.registrationLength ?: f.cells
-            if (f.kind == FieldKind.REGISTRATION && cells > 1) {
-                CellFinder.findComb(patch, pb, cells)?.let { return readComb(patch, it, t.registrationMask) }
+            val text = f.kind == FieldKind.REGISTRATION || f.kind == FieldKind.TEXT
+            val combCells = if (f.kind == FieldKind.REGISTRATION) t.registrationLength ?: f.cells else f.cells
+            if (combCells > 1) {
+                val mask = if (f.kind == FieldKind.REGISTRATION) t.registrationMask
+                    else if (text) null else "D".repeat(combCells)
+                CellFinder.findComb(patch, pb, combCells)?.let { return readComb(patch, it, mask) }
             }
             val cell = CellFinder.findCell(patch, pb)
             val area = cell?.inset(0.05, 2.0) ?: pb
             val crop = CellFinder.crop(patch, area) ?: return ExtractedField("", 0.0, issue = "Box not found")
-            val allowed = if (f.kind == FieldKind.REGISTRATION) CHARSET else DIGITS
+            val allowed = if (text) CHARSET else DIGITS
             val r = CtcDecoder.decode(model.run(crop), allowed)
             return ExtractedField(
                 r.text, r.confidence, rawText = r.text, crop = png(crop),
@@ -203,6 +216,8 @@ class SheetReader(
                 .map { (f, v) -> LabelledMark(f.label.ifEmpty { "Question" }, f.part, v, f.maxMarks) },
             writtenTotals = reads.filter { it.first.kind == FieldKind.WRITTEN_TOTAL }
                 .map { (f, v) -> LabelledMark(f.title, "", v) },
+            extras = reads.filter { it.first.kind == FieldKind.MARK || it.first.kind == FieldKind.TEXT }
+                .map { (f, v) -> LabelledMark(f.title, "", v, f.maxMarks) },
             imagePath = imagePath,
             alignment = "features",
             timingsMs = timings,

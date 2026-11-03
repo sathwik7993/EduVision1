@@ -53,7 +53,10 @@ object ScanValidator {
             else w.copy(field = w.field.withIssue("${w.label} reads ${w.field.value}, but Part-A + Part-B = $derived"))
         }
 
+        val extras = result.extras.map { it.copy(field = it.field.withIssue(overMax(it.field, it.maxMarks))) }
+
         return result.copy(
+            extras = extras,
             registrationNo = checkRegistration(result.registrationNo, template, roster, alreadySaved),
             partA = partA,
             partB = partB,
@@ -66,7 +69,7 @@ object ScanValidator {
     fun blockingErrors(result: ScanResult, template: SheetTemplate): List<String> = buildList {
         overMax(result.partA, template.partAMax)?.let { add("Part-A: $it") }
         overMax(result.partB, template.partBMax)?.let { add("Part-B: $it") }
-        result.questions.forEach { q -> overMax(q.field, q.maxMarks)?.let { add("${q.label}: $it") } }
+        (result.questions + result.extras).forEach { q -> overMax(q.field, q.maxMarks)?.let { add("${q.label}: $it") } }
     }
 
     private fun checkRegistration(
