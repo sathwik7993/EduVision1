@@ -133,6 +133,12 @@ The Flutter app took 10-15 s per scan on the phone. Phones: see below.
 | Samsung Galaxy A03s (SM-A037U, API 33, entry level) | 1647 ms (1.1-1.7 s) | 15.2 s | 12/12 |
 | TECNO POP 7 (API 31) | Test Lab infrastructure error, no result | | |
 | Samsung Galaxy A14 (API 34) | no device available during the run | | |
+| Virtual Arm phone (MediumPhone.arm, API 34) | 142 ms | 4.2 s | 12/12 |
+
+`LayoutSetupUiTest` (tap a box, name it, save) passes on the virtual phone.
+It caught a bug fixed in the same session: a tapped marks cell that sits in
+a row of equal cells was saved as the whole row; whole-row reading is now
+the default only for registration/text fields.
 
 The 2 s target is met on an entry-level phone. The one-time layout set-up
 (printed-text OCR on the whole page) is slow on that phone: next to optimise.
