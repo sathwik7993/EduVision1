@@ -126,4 +126,13 @@ class ValidationTest {
         val r = CtcDecoder.decode(probs('S' to 0.9f), DIGITS)
         assertTrue(r.confidence <= 0.1 + 1e-6)
     }
+
+    @Test fun layoutWithoutPartTotalsCanBeSaved() {
+        val extra = LabelledMark("Internal", "", f("18"), maxMarks = 20)
+        val r = ScanValidator.validate(ScanResult(f("23H51A66K1"), ExtractedField.NOT_ON_SHEET, ExtractedField.NOT_ON_SHEET,
+            extras = listOf(extra)), template.copy(fields = emptyList()))
+        assertTrue(r.fieldsNeedingReview.toString(), r.isReadyToSave)
+        val over = ScanValidator.validate(r.copy(extras = listOf(extra.copy(field = f("25")))), template)
+        assertEquals("Above the maximum of 20", over.extras[0].field.issue)
+    }
 }

@@ -57,6 +57,7 @@ fun AppNav(app: EduApp, scan: ScanViewModel) {
         composable("home") {
             HomeScreen(app, scan,
                 onReview = { nav.navigate("review") },
+                onSetup = { id -> nav.navigate("setup/$id") },
                 onResults = { nav.navigate("results") },
                 onTemplates = { nav.navigate("templates") },
                 onAccount = { nav.navigate("account") })
@@ -68,6 +69,11 @@ fun AppNav(app: EduApp, scan: ScanViewModel) {
         }
         composable("template/{id}") { entry ->
             TemplateEditorScreen(app, entry.arguments?.getString("id")!!, onBack = { nav.popBackStack() })
+        }
+        composable("setup/{id}") { entry ->
+            TemplateEditorScreen(app, entry.arguments?.getString("id")!!, setup = true,
+                onBack = { scan.reset(); nav.popBackStack() },
+                onSaved = { scan.setupDone(); nav.navigate("review") { popUpTo("home") } })
         }
         composable("account") { AccountScreen(app, onBack = { nav.popBackStack() }) }
     }

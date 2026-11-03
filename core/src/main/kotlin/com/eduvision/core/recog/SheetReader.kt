@@ -207,7 +207,7 @@ class SheetReader(
     }
 
     private fun assemble(reads: List<Pair<TemplateField, ExtractedField>>, imagePath: String?, timings: Map<String, Long>): ScanResult {
-        fun of(kind: FieldKind) = reads.firstOrNull { it.first.kind == kind }?.second ?: ExtractedField.EMPTY
+        fun of(kind: FieldKind) = reads.firstOrNull { it.first.kind == kind }?.second ?: ExtractedField.NOT_ON_SHEET
         return ScanResult(
             registrationNo = of(FieldKind.REGISTRATION),
             partA = of(FieldKind.PART_A),

@@ -54,4 +54,16 @@ class DataTest {
         assertEquals(listOf("23H51A66D9", "40", "50", "90"), rows[1].take(4))
         assertEquals(listOf("23H51A66K1", "12", "20", "32"), rows[2].take(4))
     }
+
+    @Test fun customFieldsBecomeColumns() {
+        val store = ResultsStore(context)
+        store.clear()
+        val r = ScanResult(ExtractedField.manual("19K41A0233"), ExtractedField.NOT_ON_SHEET, ExtractedField.NOT_ON_SHEET,
+            extras = listOf(com.eduvision.core.model.LabelledMark("Internal", "", ExtractedField.manual("18")),
+                com.eduvision.core.model.LabelledMark("Course code", "", ExtractedField.manual("CS301"))))
+        store.save(r, "Greenfield")
+        val rows = Xlsx.readFirstSheet(store.exportXlsx().inputStream())
+        assertEquals(listOf("Registration No", "Part-A", "Part-B", "Total", "Internal", "Course code", "Scanned At", "Layout"), rows[0])
+        assertEquals(listOf("19K41A0233", "0", "0", "0", "18", "CS301"), rows[1].take(6))
+    }
 }

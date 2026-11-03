@@ -51,6 +51,9 @@ data class ExtractedField(
          */
         const val TRUSTED_ABOVE = 0.90
         val EMPTY = ExtractedField("", 0.0)
+
+        /** A field this layout does not have: nothing to read or review. */
+        val NOT_ON_SHEET = ExtractedField("", 1.0, edited = true)
         fun manual(value: String, crop: ByteArray? = null) =
             ExtractedField(value, 1.0, edited = true, crop = crop)
     }

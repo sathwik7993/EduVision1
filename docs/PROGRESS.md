@@ -10,12 +10,39 @@ The Flutter app and its history are in git before commit 2aaf45c.
 | Native Android app (Kotlin, Compose) replacing Flutter | Done | debug + release builds; Robolectric tests; device run in Test Lab (below) |
 | Sign-in (Firebase email/password, Google) | Done | builds; **not tried on a phone** (Google sign-in needs the APK signed with a key whose SHA-1 is in the Firebase project) |
 | Capture: ML Kit document scanner, camera app, gallery | Done | not tried on a phone |
-| Template-free first scan (layout from printed labels) | Done | 9/9 real photos, synthetic sheets of a different layout |
+| Any paper layout: suggested fields + tap-to-select, custom fields as columns | Done | `NewLayoutTest`, `TapSelectTest`, `LayoutSetupUiTest` (device) |
 | Recognition pipeline (align, snap to cell, read) | Done | `RealSheetsTest`: 33/34 fields, 9/9 registration numbers, 0 silent errors |
 | Validation (ranges, sums, written total, roster, duplicates, 0/D alternatives) | Done | `ValidationTest` |
 | Review screen, results, .xlsx export, roster import, layout editor | Done | Robolectric (`DataTest`, `FieldCardTest`); editor not tried on a phone |
 | Labelled crops kept for retraining | Done | code path only |
 | Latency on entry-level phones | See "Device runs" | Firebase Test Lab |
+
+## Any paper layout (session 3, second part)
+
+A new layout needs one sample sheet and, at most, a few taps:
+
+1. Home → "Set up a new paper layout" (or just scan: a sheet that matches no
+   saved layout is detected as new).
+2. The app reads the printed text once and suggests fields from labels in
+   many wordings (`FieldSuggester`: Registered No., Roll Number, Hall Ticket
+   No., Section A, Total Marks, Marks Obtained...), each paired with the
+   empty printed box right of or below its label.
+3. The teacher taps any other box they want (`CellFinder.boxAt` snaps to the
+   printed border; a row of equal boxes can be read as one value, one
+   character per box), says what it is (registration, part totals, grand
+   total, question, any named number or text) and saves.
+4. Every later sheet of that layout is matched and read automatically; custom
+   fields become their own Excel columns.
+
+No anchors are set by hand: sheets are registered by matching the whole
+printed page (ORB features), which tolerates tilt, perspective and cropping.
+
+Verified: sample photos 34/34 fields with the suggested layout; a second,
+made-up layout with different wording and structure (registration boxes under
+the label, totals as table column headings) 12/12 with suggested fields plus
+one tapped custom field (`NewLayoutTest`); taps snap to the printed box on
+three real photos (`TapSelectTest`); the editor flow on a device
+(`LayoutSetupUiTest`, Test Lab).
 
 ## Architecture
 
@@ -67,7 +94,8 @@ LOCAL ONLY: never uploaded.
 |---|---|---|---|
 | Flutter app, v4 model, label boxes + padding (session 2) | 30/34 | 7/9 | 2 |
 | Native pipeline, v4 model | 28/34 | 5/9 | 0 |
-| Native pipeline, **v5 model (shipped as `field_recognizer_v3.onnx`)** | **33/34** | **9/9** | **0** |
+| Native pipeline, v5 model (shipped as `field_recognizer_v3.onnx`) | 33/34 | 9/9 | 0 |
+| + box-based field suggestion (current) | **34/34** | **9/9** | **0** |
 
 The one miss is Part-A on 12.13.32, where the photo cuts the marks slip off;
 it is flagged ("Could not find the printed box"). Registration numbers still
@@ -99,7 +127,15 @@ The Flutter app took 10-15 s per scan on the phone. Phones: see below.
 ## Device runs (Firebase Test Lab, project edusignin-c3d6f)
 
 `app/src/androidTest/.../DeviceBenchmarkTest.kt` on synthetic sheets only.
-Results are filled in below when a run completes.
+
+| Device | Scan (median, after layout exists) | First scan of a new layout | Read right |
+|---|---|---|---|
+| Samsung Galaxy A03s (SM-A037U, API 33, entry level) | 1647 ms (1.1-1.7 s) | 15.2 s | 12/12 |
+| TECNO POP 7 (API 31) | Test Lab infrastructure error, no result | | |
+| Samsung Galaxy A14 (API 34) | no device available during the run | | |
+
+The 2 s target is met on an entry-level phone. The one-time layout set-up
+(printed-text OCR on the whole page) is slow on that phone: next to optimise.
 
 ## APK
 
@@ -129,7 +165,9 @@ On Test Lab: see `docs/testlab.md`.
    number and a retrain on real handwriting.
 3. Import a class roster: it settles the 0/D-type doubts that currently send
    every registration number to review.
-4. Shrink the APK: an OpenCV build with only core/imgproc/features2d/calib3d
+4. Speed up the one-time layout set-up on slow phones (OCR on a smaller page,
+   or only around candidate boxes).
+5. Shrink the APK: an OpenCV build with only core/imgproc/features2d/calib3d
    would save ~15 MB; PP-OCR rec could be swapped for an English-only model.
 
 ## Open risks
@@ -138,6 +176,7 @@ On Test Lab: see `docs/testlab.md`.
 - `H` written like `+1`/`#` is read correctly on these photos but is not in
   the training data.
 - "Total in words" is not read (a digit model cannot read words).
-- A layout whose labels use other wording is not found automatically; boxes
-  must be drawn in the layout editor.
+- Labels in wording the suggester does not know are not suggested; the
+  teacher taps those boxes (one tap each).
+- Writing on a line (no printed box) cannot be snapped; the teacher draws it.
 - `app/google-services.json` is tracked (as before).
