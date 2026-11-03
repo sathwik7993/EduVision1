@@ -102,7 +102,8 @@ class ResultsStore(context: Context) {
         val reg = result.registrationNo.value.trim().uppercase()
         val row = ResultRow(reg, result.partAValue, result.partBValue, result.total,
             LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME).take(19), templateName,
-            result.extras.associate { it.label to it.field.value.trim() })
+            // Every other field of the layout, one column each, in sheet order.
+            (result.extras + result.questions + result.writtenTotals).associate { it.label to it.field.value.trim() })
         write(all().filter { it.registrationNo != reg } + row)
     }
 

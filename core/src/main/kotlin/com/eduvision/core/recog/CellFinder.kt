@@ -312,6 +312,25 @@ object CellFinder {
     private fun nearest(ps: List<Double>, target: Double, tol: Double) =
         ps.filter { abs(it - target) <= tol }.minByOrNull { abs(it - target) }
 
+    /**
+     * No writing in [crop]: no ink stroke at least a quarter of its height.
+     * Dots and specks (stray marks) do not count. Lets the reader skip the
+     * model for the many empty cells of a marks table.
+     */
+    fun looksBlank(crop: Mat): Boolean {
+        val th = ink(crop)
+        val labels = Mat(); val stats = Mat(); val cents = Mat()
+        val n = Imgproc.connectedComponentsWithStats(th, labels, stats, cents, 8)
+        val minH = 0.25 * crop.rows()
+        val minArea = max(6.0, 0.002 * crop.total())
+        var blank = true
+        for (i in 1 until n) {
+            if (stats.get(i, Imgproc.CC_STAT_HEIGHT)[0] >= minH && stats.get(i, Imgproc.CC_STAT_AREA)[0] >= minArea) { blank = false; break }
+        }
+        listOf(th, labels, stats, cents).forEach { it.release() }
+        return blank
+    }
+
     /** The pixels inside [b], clipped to the patch; null when nothing is left. */
     fun crop(patch: Mat, b: Box): Mat? {
         val x0 = b.x0.roundToInt().coerceIn(0, patch.cols())

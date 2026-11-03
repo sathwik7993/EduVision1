@@ -32,8 +32,11 @@ class NewLayoutTest {
         val layout = RealSheetsTest.reader.createTemplate(gray("b_sheet_clean.png"), "b", "Greenfield")
         val ref = layout.reference
         println("suggested: " + layout.template.fields.joinToString { "${it.kind}(${it.cells})" })
-        assertEquals(setOf(FieldKind.REGISTRATION, FieldKind.PART_A, FieldKind.PART_B, FieldKind.WRITTEN_TOTAL),
-            layout.template.fields.map { it.kind }.toSet())
+        assertTrue(layout.template.fields.map { it.kind }.containsAll(
+            listOf(FieldKind.REGISTRATION, FieldKind.PART_A, FieldKind.PART_B, FieldKind.WRITTEN_TOTAL)))
+        // The label lines of this layout are found too.
+        assertTrue(layout.template.fields.filter { it.kind == FieldKind.TEXT }.map { it.title }
+            .containsAll(listOf("Course Code", "Date of Exam")))
         assertEquals(10, layout.template.field(FieldKind.REGISTRATION)!!.cells)
 
         // The teacher taps inside the "Internal" marks box (sheet_b geometry,

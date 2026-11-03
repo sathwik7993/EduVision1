@@ -73,6 +73,7 @@ private val kindColors = mapOf(
     FieldKind.QUESTION to Color(0xFF00897B),
     FieldKind.MARK to Color(0xFFD81B60),
     FieldKind.TEXT to Color(0xFF6D4C41),
+    FieldKind.CHOICE to Color(0xFF3949AB),
 )
 
 /** Names shown to teachers for each kind of field. */
@@ -84,6 +85,7 @@ private val kindNames = mapOf(
     FieldKind.QUESTION to "Question mark",
     FieldKind.MARK to "Other number",
     FieldKind.TEXT to "Other text",
+    FieldKind.CHOICE to "Ticked option",
 )
 
 /** A field being added or edited: the box, and the row of boxes it belongs to, if any. */
@@ -273,9 +275,10 @@ private fun FieldDialog(d: Draft, fields: List<TemplateField>, onDismiss: () -> 
     fun rowByDefault(k: FieldKind) = d.field == null && d.row != null && d.rowCells >= 4 &&
         (k == FieldKind.REGISTRATION || k == FieldKind.TEXT)
     var wholeRow by remember { mutableStateOf(rowByDefault(kind)) }
+    var options by remember { mutableStateOf(d.field?.options?.joinToString(" / ").orEmpty()) }
     androidx.compose.runtime.LaunchedEffect(kind) { wholeRow = rowByDefault(kind) }
-    val named = kind == FieldKind.QUESTION || kind == FieldKind.MARK || kind == FieldKind.TEXT
-    val number = kind != FieldKind.REGISTRATION && kind != FieldKind.TEXT
+    val named = kind == FieldKind.QUESTION || kind == FieldKind.MARK || kind == FieldKind.TEXT || kind == FieldKind.CHOICE
+    val number = kind != FieldKind.REGISTRATION && kind != FieldKind.TEXT && kind != FieldKind.CHOICE
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -290,6 +293,10 @@ private fun FieldDialog(d: Draft, fields: List<TemplateField>, onDismiss: () -> 
                 if (named) {
                     OutlinedTextField(label, { label = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         label = { Text(if (kind == FieldKind.QUESTION) "Question (e.g. Q3)" else "Column name (e.g. Internal marks)") })
+                }
+                if (kind == FieldKind.CHOICE) {
+                    OutlinedTextField(options, { options = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Options, left to right, separated by /") })
                 }
                 if (number && kind != FieldKind.PART_A && kind != FieldKind.PART_B && kind != FieldKind.WRITTEN_TOTAL) {
                     OutlinedTextField(max, { max = it.filter(Char::isDigit) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -310,15 +317,26 @@ private fun FieldDialog(d: Draft, fields: List<TemplateField>, onDismiss: () -> 
         confirmButton = {
             TextButton({
                 val useRow = wholeRow && d.row != null
+                val box = if (useRow) d.row!! else d.box
+                val opts = options.split('/').map { it.trim() }.filter { it.isNotEmpty() }
+                // Keep the option positions found on the sheet; otherwise
+                // assume the options share the box equally.
+                val optBoxes = if (kind != FieldKind.CHOICE) emptyList()
+                    else d.field?.optionBoxes?.takeIf { it.size == opts.size && d.field.box == box }
+                        ?: opts.indices.map { i -> NormBox(box.left + box.width * i / opts.size, box.top, box.left + box.width * (i + 1) / opts.size, box.bottom) }
                 onSave(TemplateField(
                     kind = kind,
-                    box = if (useRow) d.row!! else d.box,
+                    box = box,
                     label = if (named) label.trim().ifEmpty { if (kind == FieldKind.QUESTION) "Q${fields.count { it.kind == kind } + 1}" else kindNames[kind]!! } else "",
                     part = d.field?.part ?: "A",
                     maxMarks = max.toIntOrNull(),
                     cells = if (useRow) d.rowCells else d.field?.cells ?: 0,
+                    free = d.field?.free ?: (kind == FieldKind.CHOICE),
+                    options = if (kind == FieldKind.CHOICE) opts else emptyList(),
+                    optionBoxes = optBoxes,
                 ))
-            }, enabled = !named || kind == FieldKind.QUESTION || label.isNotBlank()) { Text("Save") }
+            }, enabled = (!named || kind == FieldKind.QUESTION || label.isNotBlank()) &&
+                (kind != FieldKind.CHOICE || options.split('/').count { it.isNotBlank() } >= 2)) { Text("Save") }
         },
         dismissButton = {
             Row {

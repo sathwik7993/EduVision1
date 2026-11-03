@@ -17,7 +17,9 @@ import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
+import org.opencv.core.Rect
 import org.opencv.imgcodecs.Imgcodecs
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -67,10 +69,13 @@ class SheetReader(
         }
         val w = reference.cols().toDouble()
         val h = reference.rows().toDouble()
-        val fields = found.map { (kind, v) ->
-            val b = v.first
-            TemplateField(kind, NormBox(b.x0 / w, b.y0 / h, b.x1 / w, b.y1 / h), cells = v.second)
-        }
+        fun norm(b: Box) = NormBox(b.x0 / w, b.y0 / h, b.x1 / w, b.y1 / h)
+        val fields = found.map { (kind, v) -> TemplateField(kind, norm(v.first), cells = v.second) } +
+            // Everything else on the sheet: marks tables, label lines, tick choices.
+            FormFinder.find(reference, lines, found.values.map { it.first }).map { f ->
+                TemplateField(f.kind, norm(f.box), label = f.label, part = f.part, free = f.free,
+                    options = f.options, optionBoxes = f.optionBoxes.map(::norm))
+            }
         return NewLayout(SheetTemplate(id = id, name = name, fields = fields, auto = true), reference)
     }
 
@@ -97,10 +102,15 @@ class SheetReader(
         val rw = reference.cols().toDouble()
         val rh = reference.rows().toDouble()
         val diagnostics = LinkedHashMap<String, String>()
+        var contextNs = 0L
+        var readNs = 0L
         val reads = template.fields.map { f ->
             val box = Box(f.box.left * rw, f.box.top * rh, f.box.right * rw, f.box.bottom * rh)
+            val c0 = System.nanoTime()
             val (h, score) = bestHomography(photo, reference, fit, box)
-            var v = readField(photo, h, box, f, template)
+            val c1 = System.nanoTime()
+            var v = readField(photo, h, box, f, template, rw, rh)
+            contextNs += c1 - c0; readNs += System.nanoTime() - c1
             // The printed text and lines around the box do not look like the
             // template's: the value may come from a neighbouring cell.
             diagnostics[f.title] = "context %.2f".format(score)
@@ -108,6 +118,8 @@ class SheetReader(
             f to v
         }
         lap("fields")
+        timings["fields_context"] = contextNs / 1_000_000
+        timings["fields_read"] = readNs / 1_000_000
         timings["total"] = (System.nanoTime() - clock) / 1_000_000
         timings["inliers"] = fit.inliers.toLong()
         return assemble(reads, imagePath, timings).copy(diagnostics = diagnostics)
@@ -119,25 +131,33 @@ class SheetReader(
      * inside is masked out) best correlate with the reference image.
      */
     private fun bestHomography(photo: Mat, reference: Mat, fit: Aligner.Fit, box: Box): Pair<Mat, Double> {
-        val scale = 48.0 / max(box.h, 1.0)
-        val (ref, rb) = CellFinder.warpPatch(reference, identity(), box, scale.coerceIn(0.5, 3.0), CONTEXT_MARGIN)
-        val mask = Mat(ref.size(), CvType.CV_8U, Scalar(255.0))
-        Imgproc.rectangle(mask, Point(rb.x0, rb.y0), Point(rb.x1, rb.y1), Scalar(0.0), -1)
-        val best = fit.candidates(Point((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2)).map { h ->
-            val (p, _) = CellFinder.warpPatch(photo, h, box, scale.coerceIn(0.5, 3.0), CONTEXT_MARGIN)
-            h to correlation(ref, p, mask).also { p.release() }
+        // Box ~48 px tall, but the whole patch at most ~256 px wide: a text
+        // line across the page needs no more detail than that to be lined up.
+        val span = 1 + 2 * CONTEXT_MARGIN
+        val scale = minOf(48.0 / max(box.h, 1.0), 256.0 / max(span * box.w, 1.0)).coerceIn(0.2, 3.0)
+        val sigma = max(1.5, 6.0 * scale * box.h / 48.0)
+        val (ref, mask) = refContext.getOrPut(System.identityHashCode(reference) to box) {
+            val (r, rb) = CellFinder.warpPatch(reference, identity(), box, scale, CONTEXT_MARGIN)
+            val m = Mat(r.size(), CvType.CV_8U, Scalar(255.0))
+            Imgproc.rectangle(m, Point(rb.x0, rb.y0), Point(rb.x1, rb.y1), Scalar(0.0), -1)
+            r to m
+        }
+        return fit.candidates(Point((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2)).map { h ->
+            val (p, _) = CellFinder.warpPatch(photo, h, box, scale, CONTEXT_MARGIN)
+            h to correlation(ref, p, mask, sigma).also { p.release() }
         }.maxBy { it.second }
-        ref.release(); mask.release()
-        return best
     }
 
-    private fun correlation(a: Mat, b: Mat, mask: Mat): Double {
+    /** The reference side of the context check, per (reference image, box): the same on every scan. */
+    private val refContext = HashMap<Pair<Int, Box>, Pair<Mat, Mat>>()
+
+    private fun correlation(a: Mat, b: Mat, mask: Mat, sigma: Double): Double {
         val fa = Mat(); val fb = Mat()
         a.convertTo(fa, CvType.CV_32F); b.convertTo(fb, CvType.CV_32F)
         // Wide enough to forgive a few pixels of residual on thin printed
         // lines, far narrower than the one-row shift this check must catch.
-        Imgproc.GaussianBlur(fa, fa, Size(0.0, 0.0), 6.0)
-        Imgproc.GaussianBlur(fb, fb, Size(0.0, 0.0), 6.0)
+        Imgproc.GaussianBlur(fa, fa, Size(0.0, 0.0), sigma)
+        Imgproc.GaussianBlur(fb, fb, Size(0.0, 0.0), sigma)
         val ma = MatOfDouble(); val sa = MatOfDouble(); val mb = MatOfDouble(); val sb = MatOfDouble()
         Core.meanStdDev(fa, ma, sa, mask)
         Core.meanStdDev(fb, mb, sb, mask)
@@ -151,12 +171,24 @@ class SheetReader(
         return if (d < 1e-6) 0.0 else cov / d
     }
 
-    private fun readField(photo: Mat, h: Mat, box: Box, f: TemplateField, t: SheetTemplate): ExtractedField {
+    private fun readField(photo: Mat, h: Mat, box: Box, f: TemplateField, t: SheetTemplate, rw: Double, rh: Double): ExtractedField {
         if (!inside(photo, h, box)) {
             return ExtractedField("", 0.0, issue = "Cut off in the photo")
         }
         val (patch, pb) = CellFinder.warpPatch(photo, h, box, scaleFor(box), 0.5)
         try {
+            if (f.kind == FieldKind.CHOICE) return readChoice(photo, h, f, box, rw, rh)
+            if (f.kind == FieldKind.TEXT && f.cells <= 1) {
+                // Words, names, codes: the printed-text model reads whole
+                // words far better than the digit/letter box model.
+                val area = if (f.free) pb else CellFinder.findCell(patch, pb)?.inset(0.04, 2.0) ?: pb
+                val crop = CellFinder.crop(patch, area) ?: return ExtractedField("", 0.0, issue = "Box not found")
+                if (CellFinder.looksBlank(crop)) return ExtractedField("", BLANK_CONFIDENCE, crop = png(crop))
+                val (raw, conf) = textReader().recognize(crop, listOf(Box(0.0, 0.0, crop.cols().toDouble(), crop.rows().toDouble()))).first()
+                val value = raw.trim().trimStart(':', '.', '-', ' ').trim()
+                // A blank line reads as nothing; that is a confident blank.
+                return ExtractedField(value, if (value.isEmpty()) max(conf, 0.95) else conf, rawText = raw, crop = png(crop))
+            }
             val text = f.kind == FieldKind.REGISTRATION || f.kind == FieldKind.TEXT
             val combCells = if (f.kind == FieldKind.REGISTRATION) t.registrationLength ?: f.cells else f.cells
             if (combCells > 1) {
@@ -167,12 +199,67 @@ class SheetReader(
             val cell = CellFinder.findCell(patch, pb)
             val area = cell?.inset(0.05, 2.0) ?: pb
             val crop = CellFinder.crop(patch, area) ?: return ExtractedField("", 0.0, issue = "Box not found")
+            if (cell != null && CellFinder.looksBlank(crop)) return ExtractedField("", BLANK_CONFIDENCE, crop = png(crop))
             val allowed = if (text) CHARSET else DIGITS
             val r = CtcDecoder.decode(model.run(crop), allowed)
             return ExtractedField(
                 r.text, r.confidence, rawText = r.text, crop = png(crop),
                 issue = if (cell == null) "Could not find the printed box; check the value" else null,
             )
+        } finally {
+            patch.release()
+        }
+    }
+
+    /**
+     * Which printed option is ticked. Finds the tick itself: the strongest ink
+     * just above the printed options (printed letters never reach there),
+     * and takes the option under its centre. Confident only when that centre
+     * is well inside one option; a tick between two options, or two ticks,
+     * goes to review. No ink at all is a confident blank.
+     */
+    private fun readChoice(photo: Mat, h: Mat, f: TemplateField, field: Box, rw: Double, rh: Double): ExtractedField {
+        if (f.options.isEmpty() || f.options.size != f.optionBoxes.size) return ExtractedField("", 0.0, issue = "No options set")
+        val scale = scaleFor(field)
+        val (patch, pb) = CellFinder.warpPatch(photo, h, field, scale, 1.2)
+        try {
+            fun px(x: Double) = (x - field.x0) * scale + pb.x0
+            fun py(y: Double) = (y - field.y0) * scale + pb.y0
+            val opts = f.optionBoxes.map { nb -> Box(px(nb.left * rw), py(nb.top * rh), px(nb.right * rw), py(nb.bottom * rh)) }
+            val oh = opts.maxOf { it.h }
+            val top = opts.minOf { it.y0 }
+            val band = Box(opts.first().x0 - 0.3 * oh, top - 0.55 * oh, opts.last().x1 + 0.3 * oh, top + 0.2 * oh)
+            val crop = CellFinder.crop(patch, band) ?: return ExtractedField("", 0.0, issue = "Cut off in the photo")
+            val ink = CellFinder.ink(crop)
+            // The tick's low point (its vertex, nearest the option it marks)
+            // is in the lower half of the band; its long arm sweeps up and
+            // away, so the upper half would point at the wrong option.
+            val lower = ink.submat(Rect(0, ink.rows() / 2, ink.cols(), ink.rows() - ink.rows() / 2))
+            val col = Mat()
+            org.opencv.core.Core.reduce(lower, col, 0, org.opencv.core.Core.REDUCE_SUM, CvType.CV_64F)
+            val v = DoubleArray(col.cols()).also { col.get(0, 0, it) }.map { it / 255.0 }
+            val total = org.opencv.core.Core.countNonZero(ink).toDouble()
+            ink.release(); col.release()
+            val win = max(3, (0.5 * oh).toInt())
+            val sums = (0..max(0, v.size - win)).map { i -> (i until min(v.size, i + win)).sumOf { v[it] } }
+            val bi = sums.indices.maxByOrNull { sums[it] } ?: 0
+            val best = sums.getOrElse(bi) { 0.0 }
+            val noise = sums.sorted().getOrElse(sums.size / 2) { 0.0 }
+            val crops = CellFinder.crop(patch, Box(band.x0, band.y0, band.x1, opts.maxOf { it.y1 } + 0.2 * oh))?.let(::png)
+            // A tick is a thin stroke: a few pixels per column over a short run.
+            if (total < 3.0 * win || best < max(1.5 * win, 3 * noise)) {
+                return ExtractedField("", 0.9, rawText = "no mark", crop = crops)
+            }
+            val cx = band.x0 + bi + win / 2.0
+            val k = opts.indices.minByOrNull { i -> val o = opts[i]; if (cx in o.x0..o.x1) 0.0 else min(abs(cx - o.x0), abs(cx - o.x1)) }!!
+            val o = opts[k]
+            val inside = cx > o.x0 + 0.15 * o.w && cx < o.x1 - 0.15 * o.w
+            // A second, similar mark elsewhere means two ticks or a stray stroke.
+            val far = sums.indices.filter { abs(it - bi) > 1.5 * win }.maxOfOrNull { sums[it] } ?: 0.0
+            val clear = inside && far < 0.5 * best
+            return ExtractedField(f.options[k], if (clear) 0.95 else 0.6,
+                rawText = "mark at %.0f%% of options".format(100 * (cx - opts.first().x0) / max(1.0, opts.last().x1 - opts.first().x0)),
+                crop = crops)
         } finally {
             patch.release()
         }
@@ -190,6 +277,8 @@ class SheetReader(
         var confidence = 1.0
         for ((i, c) in cells.withIndex()) {
             val crop = CellFinder.crop(patch, c.inset(0.06, 1.0)) ?: continue
+            // An unfilled box (e.g. only "23" written): no character, no model run.
+            if (CellFinder.looksBlank(crop)) { alt.append(""); continue }
             val maskChar = mask?.getOrNull(i)
             val r = CtcDecoder.decode(model.run(crop), CtcDecoder.allowedFor(maskChar))
             // A box holds one character; two means the model split a stroke.
@@ -216,8 +305,8 @@ class SheetReader(
                 .map { (f, v) -> LabelledMark(f.label.ifEmpty { "Question" }, f.part, v, f.maxMarks) },
             writtenTotals = reads.filter { it.first.kind == FieldKind.WRITTEN_TOTAL }
                 .map { (f, v) -> LabelledMark(f.title, "", v) },
-            extras = reads.filter { it.first.kind == FieldKind.MARK || it.first.kind == FieldKind.TEXT }
-                .map { (f, v) -> LabelledMark(f.title, "", v, f.maxMarks) },
+            extras = reads.filter { it.first.kind == FieldKind.MARK || it.first.kind == FieldKind.TEXT || it.first.kind == FieldKind.CHOICE }
+                .map { (f, v) -> LabelledMark(f.title, "", v, f.maxMarks, blocking = f.kind == FieldKind.MARK) },
             imagePath = imagePath,
             alignment = "features",
             timingsMs = timings,
@@ -234,6 +323,9 @@ class SheetReader(
     }
 
     companion object {
+        /** An empty cell (no stroke at all) is a confident blank. */
+        const val BLANK_CONFIDENCE = 0.97
+
         /** Context around a field compared with the reference, in box sizes. */
         const val CONTEXT_MARGIN = 1.0
 

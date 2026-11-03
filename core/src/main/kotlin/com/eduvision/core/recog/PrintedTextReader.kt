@@ -40,7 +40,9 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
         rec = env.createSession(recModel, opts)
         // The character list ships inside the model's metadata; index 0 is
         // the CTC blank and a space follows the list.
-        dict = rec.metadata.customMetadata["character"]!!.lines() + " "
+        // (The list ends with a newline; a trailing empty entry would shift
+        // the space class and drop every space from the output.)
+        dict = rec.metadata.customMetadata["character"]!!.lines().dropLastWhile { it.isEmpty() } + " "
     }
 
     /**
@@ -50,16 +52,20 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
      */
     fun read(gray: Mat, maxAspect: Double = MAX_LABEL_ASPECT): List<TextLine> {
         val boxes = detect(gray).filter { it.w <= maxAspect * it.h }
-        return boxes.zip(recognize(gray, boxes)).filter { it.second.isNotBlank() }.map { TextLine(it.second, it.first) }
+        return boxes.zip(recognize(gray, boxes)).filter { it.second.first.isNotBlank() }.map { TextLine(it.second.first, it.first) }
     }
 
-    /** DB text detection on a page scaled to at most [DET_SIDE] px. */
+    /**
+     * DB text detection on the page scaled to [DET_SIDE] px on its longer
+     * side: up as well as down, so small print in a low-resolution photo is
+     * still found.
+     */
     fun detect(gray: Mat): List<Box> {
-        val s = min(1.0, DET_SIDE.toDouble() / max(gray.cols(), gray.rows()))
+        val s = DET_SIDE.toDouble() / max(gray.cols(), gray.rows())
         val w = max(32, ((gray.cols() * s) / 32).roundToInt() * 32)
         val h = max(32, ((gray.rows() * s) / 32).roundToInt() * 32)
         val resized = Mat()
-        Imgproc.resize(gray, resized, Size(w.toDouble(), h.toDouble()), 0.0, 0.0, Imgproc.INTER_AREA)
+        Imgproc.resize(gray, resized, Size(w.toDouble(), h.toDouble()), 0.0, 0.0, if (s < 1) Imgproc.INTER_AREA else Imgproc.INTER_CUBIC)
         val f = Mat()
         resized.convertTo(f, CvType.CV_32F, 1 / 255.0)
         val plane = FloatArray(w * h)
@@ -104,8 +110,11 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
         return boxes.sortedWith(compareBy({ it.y0 }, { it.x0 }))
     }
 
-    /** CRNN recognition of each box, batched by width. */
-    fun recognize(gray: Mat, boxes: List<Box>): List<String> {
+    /**
+     * CRNN recognition of each box, batched by width: text and confidence
+     * (the least certain character's probability).
+     */
+    fun recognize(gray: Mat, boxes: List<Box>): List<Pair<String, Double>> {
         val crops = boxes.map { b ->
             val r = Rect(b.x0.toInt(), b.y0.toInt(), max(1, (b.x1 - b.x0).toInt()), max(1, (b.y1 - b.y0).toInt()))
             val cw = min(REC_MAX_WIDTH, ceil(REC_HEIGHT * r.width.toDouble() / r.height).toInt()).coerceAtLeast(8)
@@ -113,7 +122,7 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
             Imgproc.resize(gray.submat(r), m, Size(cw.toDouble(), REC_HEIGHT.toDouble()), 0.0, 0.0, Imgproc.INTER_LINEAR)
             m
         }
-        val out = arrayOfNulls<String>(boxes.size)
+        val out = arrayOfNulls<Pair<String, Double>>(boxes.size)
         crops.indices.sortedBy { crops[it].cols() }.chunked(8).forEach { batch ->
             val bw = batch.maxOf { crops[it].cols() }
             val plane = REC_HEIGHT * bw
@@ -137,6 +146,7 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
                     val buf = tensor.floatBuffer
                     batch.forEachIndexed { n, idx ->
                         val sb = StringBuilder()
+                        var conf = 1.0
                         var prev = 0
                         for (tt in 0 until frames) {
                             var best = 0
@@ -146,16 +156,19 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
                                 val v = buf.get(base + c)
                                 if (v > bp) { bp = v; best = c }
                             }
-                            if (best != 0 && best != prev && best - 1 < dict.size) sb.append(dict[best - 1])
+                            if (best != 0 && best != prev && best - 1 < dict.size) {
+                                sb.append(dict[best - 1])
+                                conf = min(conf, bp.toDouble())
+                            }
                             prev = best
                         }
-                        out[idx] = sb.toString().trim()
+                        out[idx] = sb.toString().trim() to (if (sb.isEmpty()) 0.0 else conf)
                     }
                 }
             }
         }
         crops.forEach { it.release() }
-        return out.map { it ?: "" }
+        return out.map { it ?: ("" to 0.0) }
     }
 
     override fun close() {
@@ -163,7 +176,7 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
     }
 
     companion object {
-        const val DET_SIDE = 960
+        const val DET_SIDE = 1280
 
         /** "Registered No." is ~7x as wide as tall; a sentence is 20-40x. */
         const val MAX_LABEL_ASPECT = 14.0

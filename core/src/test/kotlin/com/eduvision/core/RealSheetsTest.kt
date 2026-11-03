@@ -62,10 +62,10 @@ class RealSheetsTest {
         }
         val clean = reader.createTemplate(gray(annotations.keys.first { "13.33" in it }), "t", "t")
         assertNotNull(clean)
-        assertEquals(
-            setOf(FieldKind.REGISTRATION, FieldKind.PART_A, FieldKind.PART_B, FieldKind.WRITTEN_TOTAL),
-            clean!!.template.fields.map { it.kind }.toSet(),
-        )
+        assertTrue(clean!!.template.fields.map { it.kind }.containsAll(
+            listOf(FieldKind.REGISTRATION, FieldKind.PART_A, FieldKind.PART_B, FieldKind.WRITTEN_TOTAL)))
+        // The marks slip's 17 question cells (3 struck cells skipped).
+        assertEquals(17, clean.template.fields.count { it.kind == FieldKind.QUESTION })
         assertEquals(10, clean.template.field(FieldKind.REGISTRATION)!!.cells)
     }
 

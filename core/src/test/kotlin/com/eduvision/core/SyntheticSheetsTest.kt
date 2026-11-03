@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.opencv.imgcodecs.Imgcodecs
@@ -36,7 +37,7 @@ class SyntheticSheetsTest {
             println("$name ${r.registrationNo.value} ${r.partA.value} ${r.partB.value} ${r.timingsMs} want $want")
         }
         println("SYNTHETIC right $right/$total")
-        assertEquals(setOf("REGISTRATION", "PART_A", "PART_B", "WRITTEN_TOTAL"), template.fields.map { it.kind.name }.toSet())
+        assertTrue(template.fields.map { it.kind.name }.containsAll(listOf("REGISTRATION", "PART_A", "PART_B", "WRITTEN_TOTAL")))
         org.junit.Assert.assertTrue("right $right/$total", right >= 11)
     }
 }

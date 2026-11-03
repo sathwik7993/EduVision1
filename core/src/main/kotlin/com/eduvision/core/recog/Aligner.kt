@@ -64,8 +64,18 @@ class Aligner(reference: Mat) {
          * The global homography plus regional ones at two radii: the caller
          * picks whichever makes the printed context around a field match.
          */
-        fun candidates(center: Point): List<Mat> =
-            listOf(global) + listOf(0.3, 0.15).mapNotNull { fitNear(center, it)?.first }
+        fun candidates(center: Point): List<Mat> {
+            // Neighbouring fields (a row of marks cells) share their regional
+            // fits: one fit per patch of page, not one per field.
+            val cell = 0.06 * refSide
+            val key = Math.round(center.x / cell) * 10_000 + Math.round(center.y / cell)
+            return cache.getOrPut(key) {
+                val c = Point((Math.round(center.x / cell)) * cell, (Math.round(center.y / cell)) * cell)
+                listOf(global) + listOf(0.3, 0.15).mapNotNull { fitNear(c, it)?.first }
+            }
+        }
+
+        private val cache = HashMap<Long, List<Mat>>()
 
         private fun fitNear(center: Point, radius: Double): Triple<Mat, MatOfPoint2f, MatOfPoint2f>? {
             val r = radius * refSide
