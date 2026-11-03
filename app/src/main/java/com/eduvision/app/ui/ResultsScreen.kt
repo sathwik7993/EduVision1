@@ -112,6 +112,10 @@ fun ResultsScreen(app: EduApp, onBack: () -> Unit) {
                             Icon(Icons.Default.Delete, "Delete ${row.registrationNo}")
                         }
                     }
+                    if (row.extras.isNotEmpty()) {
+                        Text(row.extras.entries.joinToString("   ") { "${it.key}: ${it.value}" },
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     HorizontalDivider()
                 }
             }

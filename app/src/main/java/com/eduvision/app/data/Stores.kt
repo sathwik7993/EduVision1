@@ -76,6 +76,8 @@ data class ResultRow(
     val total: Int,
     val scannedAt: String,
     val template: String = "",
+    /** The layout's own fields (column name -> value), e.g. "Internal" -> "18". */
+    val extras: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -99,7 +101,8 @@ class ResultsStore(context: Context) {
     fun save(result: ScanResult, templateName: String) {
         val reg = result.registrationNo.value.trim().uppercase()
         val row = ResultRow(reg, result.partAValue, result.partBValue, result.total,
-            LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME).take(19), templateName)
+            LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME).take(19), templateName,
+            result.extras.associate { it.label to it.field.value.trim() })
         write(all().filter { it.registrationNo != reg } + row)
     }
 
@@ -109,13 +112,20 @@ class ResultsStore(context: Context) {
 
     private fun write(rows: List<ResultRow>) = file.writeAtomically(json.encodeToString(serializer, rows))
 
-    /** Marks are numbers, not text, so Excel can SUM and AVERAGE them. */
+    /**
+     * Marks are numbers, not text, so Excel can SUM and AVERAGE them. Each
+     * custom field of any layout gets its own column.
+     */
     fun exportXlsx(): File {
         val out = File(exportDir, "exam_results.xlsx")
-        val rows = listOf(listOf("Registration No", "Part-A", "Part-B", "Total", "Scanned At", "Layout").map { Xlsx.Text(it) }) +
-            all().sortedBy { it.registrationNo }.map {
-                listOf(Xlsx.Text(it.registrationNo), Xlsx.Num(it.partA), Xlsx.Num(it.partB), Xlsx.Num(it.total),
-                    Xlsx.Text(it.scannedAt.replace('T', ' ')), Xlsx.Text(it.template))
+        val all = all().sortedBy { it.registrationNo }
+        val extraColumns = all.flatMap { it.extras.keys }.distinct()
+        fun cell(v: String?): Xlsx.Cell = v?.toLongOrNull()?.let { Xlsx.Num(it) } ?: Xlsx.Text(v.orEmpty())
+        val rows = listOf((listOf("Registration No", "Part-A", "Part-B", "Total") + extraColumns + listOf("Scanned At", "Layout")).map { Xlsx.Text(it) }) +
+            all.map {
+                listOf(Xlsx.Text(it.registrationNo), Xlsx.Num(it.partA), Xlsx.Num(it.partB), Xlsx.Num(it.total)) +
+                    extraColumns.map { c -> cell(it.extras[c]) } +
+                    listOf(Xlsx.Text(it.scannedAt.replace('T', ' ')), Xlsx.Text(it.template))
             }
         out.outputStream().use { Xlsx.write(it, "Results", rows) }
         return out
@@ -153,19 +163,21 @@ private data class CorrectionEntry(
 class CorrectionStore(context: Context) {
     val dir = File(context.filesDir, "labelled_crops").apply { mkdirs() }
 
-    fun record(result: ScanResult, modelValues: Map<FieldKind, String>) {
+    /** [modelValues]: what the model read before the teacher's edits, by field kind name or label. */
+    fun record(result: ScanResult, modelValues: Map<String, String>) {
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME).take(19)
         val index = File(dir, "index.jsonl")
         val stamp = System.currentTimeMillis()
-        listOf(
-            Triple(FieldKind.REGISTRATION, result.registrationNo, "registration"),
-            Triple(FieldKind.PART_A, result.partA, "partA"),
-            Triple(FieldKind.PART_B, result.partB, "partB"),
-        ).forEach { (kind, f, name) ->
+        (listOf(
+            Triple(FieldKind.REGISTRATION.name, result.registrationNo, "registration"),
+            Triple(FieldKind.PART_A.name, result.partA, "partA"),
+            Triple(FieldKind.PART_B.name, result.partB, "partB"),
+        ) + (result.writtenTotals + result.extras + result.questions).mapIndexed { i, m -> Triple(m.label, m.field, "f$i") })
+            .forEach { (key, f, name) ->
             val crop = f.crop ?: return@forEach
             val fileName = "${stamp}_$name.png"
             File(dir, fileName).writeBytes(crop)
-            val e = CorrectionEntry(fileName, name, f.value, modelValues[kind] ?: "", f.confidence, f.edited, now)
+            val e = CorrectionEntry(fileName, key, f.value, modelValues[key] ?: "", f.confidence, f.edited, now)
             index.appendText(json.encodeToString(CorrectionEntry.serializer(), e) + "\n")
         }
     }

@@ -6,8 +6,10 @@ import android.net.Uri
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.eduvision.app.data.TemplateStore
+import com.eduvision.core.model.FieldKind
 import com.eduvision.core.model.ScanResult
 import com.eduvision.core.model.SheetTemplate
+import com.eduvision.core.recog.CellFinder
 import com.eduvision.core.recog.FieldModel
 import com.eduvision.core.recog.PrintedTextReader
 import com.eduvision.core.recog.SheetNotRecognized
@@ -25,9 +27,12 @@ import org.opencv.imgproc.Imgproc
 import java.io.File
 import kotlin.math.max
 
-class NoLayoutFound : Exception(
-    "Could not find the printed labels on this sheet (\"Registered No.\", \"Part-A Total\", " +
-        "\"GRAND TOTAL\"). Photograph the whole page, or create a template and draw its boxes.")
+/**
+ * The photo matches no saved layout and its fields could not be found from
+ * the printed labels: the teacher sets up the new layout (taps the boxes).
+ * The template with the photo as its sample is already saved.
+ */
+class NeedsSetup(val templateId: String, val photo: File) : Exception("New paper layout: select its fields.")
 
 /** One scan: the result, the template that read it, and whether that template was just created. */
 data class Scan(val result: ScanResult, val template: SheetTemplate, val newLayout: Boolean, val photo: File)
@@ -57,9 +62,10 @@ class Scanner(private val context: Context, private val templates: TemplateStore
     /**
      * Reads the sheet in [photo]: with the active template, else any other
      * saved template the photo matches, else a new template found from the
-     * printed labels.
+     * printed labels. [newLayout]: the teacher said this is a new paper
+     * layout; skip matching and always let them check its fields first.
      */
-    suspend fun scan(photo: File): Scan = withContext(Dispatchers.Default) {
+    suspend fun scan(photo: File, newLayout: Boolean = false): Scan = withContext(Dispatchers.Default) {
         lock.withLock {
             val r = readerLocked()
             val t0 = System.nanoTime()
@@ -68,7 +74,7 @@ class Scanner(private val context: Context, private val templates: TemplateStore
             try {
                 val active = templates.activeId
                 val candidates = templates.all().sortedBy { if (it.id == active) 0 else 1 }
-                for (t in candidates) {
+                for (t in if (newLayout) emptyList() else candidates) {
                     val ref = templates.reference(t) ?: continue
                     if (t.fields.isEmpty()) continue
                     try {
@@ -80,11 +86,15 @@ class Scanner(private val context: Context, private val templates: TemplateStore
                     }
                 }
                 val l0 = System.nanoTime()
-                val layout = r.createTemplate(gray, templates.newId(), "Sheet layout ${candidates.size + 1}") ?: throw NoLayoutFound()
+                val layout = r.createTemplate(gray, templates.newId(), "Paper layout ${candidates.size + 1}")
                 val layoutMs = (System.nanoTime() - l0) / 1_000_000
                 templates.save(layout.template, layout.reference)
                 templates.activeId = layout.template.id
                 val saved = templates.get(layout.template.id)!!
+                // Without a student number and at least one mark, guessing is
+                // worse than asking: the teacher selects the fields once.
+                val kinds = saved.fields.map { it.kind }.toSet()
+                if (newLayout || FieldKind.REGISTRATION !in kinds || kinds.size < 2) throw NeedsSetup(saved.id, photo)
                 val res = r.read(gray, saved, layout.reference, photo.path)
                 Scan(res.withDecode(decodeMs).let { it.copy(timingsMs = it.timingsMs + ("layout" to layoutMs)) }, saved, true, photo)
             } finally {
@@ -106,23 +116,27 @@ class Scanner(private val context: Context, private val templates: TemplateStore
         }
     }
 
-    /** A template from a sample photo; boxes from the labels when they are found. */
+    /** A new layout from a sample photo, with the fields its labels point to. */
     suspend fun templateFromPhoto(photo: File, name: String): SheetTemplate = withContext(Dispatchers.Default) {
         lock.withLock {
             val r = readerLocked()
             val gray = loadGray(photo)
             try {
                 val layout = r.createTemplate(gray, templates.newId(), name)
-                if (layout != null) {
-                    templates.save(layout.template, layout.reference); templates.get(layout.template.id)!!
-                } else {
-                    val t = SheetTemplate(templates.newId(), name)
-                    templates.save(t, com.eduvision.core.recog.Aligner.downscale(gray, SheetReader.REFERENCE_SIDE))
-                    templates.get(t.id)!!
-                }
+                templates.save(layout.template, layout.reference)
+                templates.get(layout.template.id)!!
             } finally {
                 gray.release()
             }
+        }
+    }
+
+    /** The printed box the teacher tapped on a layout's sample (reference pixels). */
+    suspend fun boxAt(template: SheetTemplate, x: Double, y: Double): CellFinder.Picked? = withContext(Dispatchers.Default) {
+        lock.withLock {
+            readerLocked()
+            val ref = templates.reference(template) ?: return@withLock null
+            CellFinder.boxAt(ref, x, y)
         }
     }
 

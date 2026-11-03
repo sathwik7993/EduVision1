@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.eduvision.app.EduApp
 import com.eduvision.app.recog.Scan
+import com.eduvision.app.recog.NeedsSetup
 import com.eduvision.app.recog.Scanner
 import com.eduvision.core.model.ExtractedField
 import com.eduvision.core.model.FieldKind
@@ -28,30 +29,55 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         data object Working : State
         data class Failed(val message: String) : State
         data class Ready(val scan: Scan, val result: ScanResult) : State
+
+        /** A new paper layout: the teacher selects its fields, then [photo] is read with it. */
+        data class Setup(val templateId: String, val photo: java.io.File) : State
     }
 
     var state by mutableStateOf<State>(State.Idle)
         private set
 
     /** What the model read before the teacher touched anything, for the correction log. */
-    private var modelValues: Map<FieldKind, String> = emptyMap()
+    private var modelValues: Map<String, String> = emptyMap()
 
-    fun process(uri: Uri) {
+    fun process(uri: Uri, newLayout: Boolean = false) {
         state = State.Working
         viewModelScope.launch {
             state = try {
                 val photo = withContext(Dispatchers.IO) { Scanner.copyToFile(app, uri) }
-                val scan = app.scanner.scan(photo)
-                modelValues = mapOf(
-                    FieldKind.REGISTRATION to scan.result.registrationNo.value,
-                    FieldKind.PART_A to scan.result.partA.value,
-                    FieldKind.PART_B to scan.result.partB.value,
-                )
-                State.Ready(scan, validate(scan.result, scan.template))
+                ready(app.scanner.scan(photo, newLayout))
+            } catch (e: NeedsSetup) {
+                State.Setup(e.templateId, e.photo)
             } catch (e: Exception) {
                 State.Failed(e.message ?: e.toString())
             }
         }
+    }
+
+    /** The teacher saved the new layout's fields: read the sample sheet with it. */
+    fun setupDone() {
+        val s = state as? State.Setup ?: return
+        state = State.Working
+        viewModelScope.launch {
+            state = try {
+                val t = app.templates.get(s.templateId) ?: error("Layout was deleted")
+                if (t.fields.isEmpty()) State.Idle
+                else ready(Scan(app.scanner.reread(s.photo, t), t, true, s.photo))
+            } catch (e: Exception) {
+                State.Failed(e.message ?: e.toString())
+            }
+        }
+    }
+
+    private fun ready(scan: Scan): State.Ready {
+        val r = scan.result
+        modelValues = buildMap {
+            put(FieldKind.REGISTRATION.name, r.registrationNo.value)
+            put(FieldKind.PART_A.name, r.partA.value)
+            put(FieldKind.PART_B.name, r.partB.value)
+            (r.writtenTotals + r.extras + r.questions).forEach { put(it.label, it.field.value) }
+        }
+        return State.Ready(scan, validate(r, scan.template))
     }
 
     private fun validate(r: ScanResult, t: SheetTemplate) =

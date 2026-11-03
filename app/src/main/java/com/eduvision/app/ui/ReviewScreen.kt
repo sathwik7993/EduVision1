@@ -69,6 +69,8 @@ fun ReviewScreen(app: EduApp, scan: ScanViewModel, onDone: () -> Unit) {
 
     fun leave() { scan.reset(); onDone() }
     BackHandler { leave() }
+    // A new layout saved without fields: nothing to review.
+    androidx.compose.runtime.LaunchedEffect(state) { if (state is ScanViewModel.State.Idle) onDone() }
 
     Scaffold(topBar = {
         TopAppBar(
@@ -99,16 +101,24 @@ fun ReviewScreen(app: EduApp, scan: ScanViewModel, onDone: () -> Unit) {
             FieldCard("Registration No", r.registrationNo, text = true, testTag = "reg") { v ->
                 scan.edit { it.copy(registrationNo = v) }
             }
-            FieldCard("Part-A total (max ${t.partAMax})", r.partA, testTag = "partA") { v -> scan.edit { it.copy(partA = v) } }
-            FieldCard("Part-B total (max ${t.partBMax})", r.partB, testTag = "partB") { v -> scan.edit { it.copy(partB = v) } }
+            if (t.field(com.eduvision.core.model.FieldKind.PART_A) != null) {
+                FieldCard("Part-A total (max ${t.partAMax})", r.partA, testTag = "partA") { v -> scan.edit { it.copy(partA = v) } }
+            }
+            if (t.field(com.eduvision.core.model.FieldKind.PART_B) != null) {
+                FieldCard("Part-B total (max ${t.partBMax})", r.partB, testTag = "partB") { v -> scan.edit { it.copy(partB = v) } }
+            }
             r.writtenTotals.forEachIndexed { i, m ->
                 MarkCard(m) { v -> scan.edit { res -> res.copy(writtenTotals = res.writtenTotals.toMutableList().also { it[i] = it[i].copy(field = v) }) } }
+            }
+            val textLabels = t.fields.filter { it.kind == com.eduvision.core.model.FieldKind.TEXT }.map { it.title }.toSet()
+            r.extras.forEachIndexed { i, m ->
+                MarkCard(m, text = m.label in textLabels) { v -> scan.edit { res -> res.copy(extras = res.extras.toMutableList().also { it[i] = it[i].copy(field = v) }) } }
             }
             r.questions.forEachIndexed { i, m ->
                 MarkCard(m) { v -> scan.edit { res -> res.copy(questions = res.questions.toMutableList().also { it[i] = it[i].copy(field = v) }) } }
             }
 
-            Card(Modifier.fillMaxWidth()) {
+            if (t.field(com.eduvision.core.model.FieldKind.PART_A) != null || t.field(com.eduvision.core.model.FieldKind.PART_B) != null) Card(Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Total (Part-A + Part-B)", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                     Text("${r.total}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -175,8 +185,8 @@ private fun NewLayoutCard(name: String, isNew: Boolean, reading: String, aMax: I
 }
 
 @Composable
-private fun MarkCard(m: LabelledMark, onChange: (ExtractedField) -> Unit) =
-    FieldCard(m.label + (m.maxMarks?.let { " (max $it)" } ?: ""), m.field, blankOk = true, onChange = onChange)
+private fun MarkCard(m: LabelledMark, text: Boolean = false, onChange: (ExtractedField) -> Unit) =
+    FieldCard(m.label + (m.maxMarks?.let { " (max $it)" } ?: ""), m.field, text = text, blankOk = true, onChange = onChange)
 
 /**
  * One field: the exact pixels the model read, its value (editable), and

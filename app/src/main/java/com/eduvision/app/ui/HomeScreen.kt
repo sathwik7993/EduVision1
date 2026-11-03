@@ -62,6 +62,7 @@ fun HomeScreen(
     app: EduApp,
     scan: ScanViewModel,
     onReview: () -> Unit,
+    onSetup: (String) -> Unit,
     onResults: () -> Unit,
     onTemplates: () -> Unit,
     onAccount: () -> Unit,
@@ -71,6 +72,8 @@ fun HomeScreen(
     var layout by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    // The next capture is the sample of a new paper layout.
+    var forNewLayout by remember { mutableStateOf(false) }
 
     LifecycleResumeEffect(Unit) {
         saved = app.results.all().size
@@ -80,14 +83,14 @@ fun HomeScreen(
 
     val scanner = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
         if (res.resultCode == Activity.RESULT_OK) {
-            GmsDocumentScanningResult.fromActivityResultIntent(res.data)?.pages?.firstOrNull()?.imageUri?.let(scan::process)
+            GmsDocumentScanningResult.fromActivityResultIntent(res.data)?.pages?.firstOrNull()?.imageUri?.let { scan.process(it, forNewLayout) }
         }
     }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        if (ok) cameraUri?.let(scan::process)
+        if (ok) cameraUri?.let { scan.process(it, forNewLayout) }
     }
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let(scan::process)
+        uri?.let { scan.process(it, forNewLayout) }
     }
 
     fun startDocumentScanner() {
@@ -111,7 +114,11 @@ fun HomeScreen(
     }
 
     LaunchedEffect(scan.state) {
-        if (scan.state is ScanViewModel.State.Ready) onReview()
+        when (val s = scan.state) {
+            is ScanViewModel.State.Ready -> onReview()
+            is ScanViewModel.State.Setup -> onSetup(s.templateId)
+            else -> {}
+        }
     }
 
     Scaffold(topBar = {
@@ -142,18 +149,27 @@ fun HomeScreen(
                     }
                     notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     val idle = scan.state !is ScanViewModel.State.Working
-                    Button(::startDocumentScanner, enabled = idle, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                    Button({ forNewLayout = false; startDocumentScanner() }, enabled = idle, modifier = Modifier.fillMaxWidth().height(56.dp)) {
                         Icon(Icons.Default.DocumentScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan sheet")
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(::startCamera, enabled = idle, modifier = Modifier.weight(1f)) {
+                        OutlinedButton({ forNewLayout = false; startCamera() }, enabled = idle, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.PhotoCamera, null); Spacer(Modifier.width(6.dp)); Text("Camera")
                         }
-                        OutlinedButton({ gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        OutlinedButton({ forNewLayout = false; gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             enabled = idle, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.PhotoLibrary, null); Spacer(Modifier.width(6.dp)); Text("Gallery")
                         }
                     }
+                }
+            }
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("New paper layout?", style = MaterialTheme.typography.titleMedium)
+                    Text("College changed its answer sheet, or a new exam format? Scan one sheet and tap the boxes to read. " +
+                        "Sheets of a new layout are also detected automatically.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton({ forNewLayout = true; startDocumentScanner() }, enabled = scan.state !is ScanViewModel.State.Working,
+                        modifier = Modifier.fillMaxWidth()) { Text("Set up a new paper layout") }
                 }
             }
             Card(onClick = onResults, modifier = Modifier.fillMaxWidth()) {
