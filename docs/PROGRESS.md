@@ -147,6 +147,28 @@ The Flutter app took 10-15 s per scan on the phone. Phones: see below.
 | Samsung Galaxy A14 (API 34) | no device available during the run | | |
 | Virtual Arm phone (MediumPhone.arm, API 34), 0.3.0, 4 fields | 142 ms | 4.2 s | 12/12 |
 | Virtual Arm phone, 0.4.0, all 21 fields of the synthetic sheet | 422 ms | 8.0 s | 12/12 |
+| Samsung Galaxy A03s, 0.4.1 (fields in parallel), 21 fields | 846-1005 ms (0.4.0 way: 1581-1779 ms) | 14.9 s | 12/12 |
+| Virtual Arm phone, 0.4.1, 21 fields | 210-224 ms (0.4.0 way: 247-277 ms) | 5.8 s | 12/12 |
+
+### Speed (0.4.1)
+
+The fields of a sheet are read on up to 4 threads, each model call on one
+core, and all boxes of a comb go through the model in one call (the model's
+batch size is now declared dynamic; weights and outputs unchanged). On the
+Galaxy A03s (8 slow cores) that is ~1.8x faster. Measured on both phones in
+two alternating rounds (`DeviceBenchmarkTest`), all 12/12 read right:
+
+| A03s, median ms per sheet | round 1 | round 2 |
+|---|---|---|
+| one field at a time (0.4.0) | 1779 | 1581 |
+| fields in parallel (0.4.1, shipped) | 1005 | 846 |
+| + int8 LSTM/head weights | 1021 | 853 |
+| + XNNPACK kernels | 848 | 875 |
+| + int8 + XNNPACK | 884 | 830 |
+
+int8 and XNNPACK are within the noise, so the app keeps the plain fp32
+model. Fully int8 (convolutions too) was rejected on the desktop tests:
+synthetic 11/12, layout B 10/12.
 
 0.4.0 reads every field (questions, text lines, ticks), not just four, and
 looks for printed text at a larger working size; both cost time. Still well
