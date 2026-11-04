@@ -1,6 +1,6 @@
 {
-  "id": "sathwikchappala/eduvision-field-recognizer-v5",
-  "title": "eduvision-field-recognizer-v5",
+  "id": "sathwikchappala/eduvision-field-recognizer-v6",
+  "title": "eduvision-field-recognizer-v6",
   "code_file": "eduvision_recognizer.py",
   "language": "python",
   "kernel_type": "script",
@@ -13,7 +13,7 @@
   ],
   "competition_sources": [],
   "kernel_sources": [
-    "sathwikchappala/eduvision-field-recognizer-v4"
+    "sathwikchappala/eduvision-field-recognizer-v5"
   ],
   "model_sources": []
 }

@@ -14,11 +14,19 @@
 # Runs as a Kaggle script kernel (`python eduvision_recognizer.py`) and locally
 # (`python eduvision_recognizer.py --smoke --data-dir <csv dir>`).
 #
+# v6 trains two models from the v5 weights (`--task both`): one for
+# registration numbers, one for marks. Each is a soup (weight average) of
+# `--seeds` fine-tuning runs, each run keeping an EMA of its weights; the soup
+# is then interpolated with the starting model (WiSE-FT) and the best on a
+# second validation set is kept. Its confidence is calibrated by a
+# temperature folded into the classifier weights.
+#
 # Outputs (in the working dir):
-# - `field_recognizer.onnx`        fp32 model, input [1,1,32,W] -> probs [1,T,37]
-# - `field_recognizer.int8.onnx`   dynamic-int8 variant
+# - `field_recognizer_reg.onnx`, `field_recognizer_marks.onnx`
+#                                  fp32, input [N,1,32,W] -> probs [N,T,37]
 # - `eval_sets.npz`                held-out crops (EMNIST *test* glyphs only)
-# - `results.json`                 accuracy, confidence-gate metrics, size
+# - `results.json`                 per task: every candidate on validation, the
+#                                  pick, held-out metrics vs the starting model
 
 # %%
 import argparse
@@ -559,15 +567,37 @@ def score(preds, labels) -> dict:
 
 # %%
 class FieldStream(torch.utils.data.IterableDataset):
-    def __init__(self, bank, seed):
-        self.bank, self.seed = bank, seed
+    def __init__(self, bank, seed, task="all"):
+        self.bank, self.seed, self.task = bank, seed, task
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
         rng = np.random.default_rng(self.seed + (info.id if info else 0) * 7919 + int(time.time()))
         while True:
-            gray, text = sample_field(self.bank, rng)
+            gray, text = sample_task(self.bank, rng, self.task)
             yield prep(gray), text
+
+
+def sample_task(bank, rng, task="all"):
+    """Training data for one of the app's two models.
+
+    reg:   registration numbers, mostly one comb box at a time as the app
+           reads them, plus whole combs and free-written numbers.
+    marks: marks only (digits), in the cells and boxes they are written in.
+    all:   the single general model of v5.
+    """
+    if task == "reg":
+        r = rng.random()
+        if r < 0.6:
+            return sample_field(bank, rng, "char", "box")
+        return sample_field(bank, rng, "reg", "comb" if r < 0.8 else "free")
+    if task == "marks":
+        r = rng.random()
+        if r < 0.12:
+            d = DIGITS[rng.integers(10)]
+            return render_field(d, bank, rng, layout="box", cells=1), d
+        return sample_field(bank, rng, "mark", "cell" if r < 0.55 else "free")
+    return sample_field(bank, rng)
 
 
 def sample_field(bank, rng, kind=None, layout=None):
@@ -654,6 +684,22 @@ def allowed_for(name: str) -> str:
     return CHARSET if name.startswith("reg") else DIGITS
 
 
+TASK_SETS = {
+    "reg": ("reg_box", "reg_comb", "reg_exam"),
+    "marks": ("emnist_digit", "marks_clean", "marks_exam", "marks_cell"),
+}
+
+
+def task_val(bank, task, n, seed):
+    """Fixed validation set from *train* glyphs (the test glyphs stay for the final eval)."""
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(n):
+        g, t = sample_task(bank, rng, task)
+        out.append((prep(g), t, CHARSET if task == "reg" else DIGITS))
+    return out
+
+
 # %% [markdown]
 # ## Train, export, evaluate
 
@@ -676,17 +722,24 @@ def evaluate_onnx(path, sets) -> dict:
     return out
 
 
-def validate(model, val, device) -> float:
-    """Exact-match accuracy on a fixed synthetic set built from *train*
-    glyphs (the EMNIST test glyphs stay untouched for the final eval)."""
+def val_metrics(model, val, device, temperature=1.0) -> dict:
+    """Exact match and the app's review-gate numbers on [val]: the fraction
+    read wrong yet trusted (confidence >= 0.90) is what must stay near 0."""
     model.eval()
-    hits = 0
+    hits = silent = accepted = 0
     with torch.no_grad():
         for x, text, allowed in val:
-            probs = model(torch.from_numpy(x)[None, None].to(device))[0].cpu().numpy()
-            hits += ctc_decode(probs, allowed)[0] == text
+            f = model.features(torch.from_numpy(x)[None, None].to(device))
+            y, _ = model.rnn(f)
+            probs = F.softmax(model.head(y) / temperature, dim=-1)[0].cpu().numpy()
+            pred, conf = ctc_decode(probs, allowed)
+            hits += pred == text
+            if conf >= TRUSTED_ABOVE and pred:
+                accepted += 1
+                silent += pred != text
     model.train()
-    return hits / len(val)
+    n = len(val)
+    return {"exact": hits / n, "silent": silent / n, "accepted": accepted / n}
 
 
 def main():
@@ -703,16 +756,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="/kaggle/input")
     ap.add_argument("--out-dir", default=".")
-    ap.add_argument("--steps", type=int, default=15000)
-    ap.add_argument("--max-minutes", type=float, default=60,
+    ap.add_argument("--steps", type=int, default=4000)
+    ap.add_argument("--max-minutes", type=float, default=200,
                     help="hard wall-clock cap for the whole run (GPU quota); training stops early enough to export")
     ap.add_argument("--export-minutes", type=float, default=10, help="time reserved for export + eval")
-    ap.add_argument("--val-every", type=int, default=1000)
-    ap.add_argument("--patience", type=int, default=4, help="validations without improvement before stopping")
+    ap.add_argument("--val-every", type=int, default=500)
+    ap.add_argument("--patience", type=int, default=3, help="validations without improvement before stopping")
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--workers", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--eval-n", type=int, default=2000)
     ap.add_argument("--smoke", action="store_true", help="tiny run on test CSVs to check the pipeline")
+    ap.add_argument("--task", default="both", choices=["all", "reg", "marks", "both"],
+                    help="both: a registration model and a marks model")
+    ap.add_argument("--seeds", type=int, default=3, help="runs per task, averaged into a model soup")
+    ap.add_argument("--ema", type=float, default=0.999, help="EMA decay of the weights")
+    ap.add_argument("--lr", type=float, default=5e-4, help="peak learning rate (fine-tuning)")
+    ap.add_argument("--val-n", type=int, default=1500)
     ap.add_argument("--init", default="field_recognizer.pt",
                     help="state dict to fine-tune from (a path, or a file name found under --data-dir, "
                          "e.g. an attached earlier kernel's output); trains from scratch if not found")
@@ -731,100 +790,153 @@ def main():
 
     sets = build_eval_sets(test_bank, args.eval_n)
     save_eval_sets(sets, os.path.join(args.out_dir, "eval_sets.npz"))
-    val_rng = np.random.default_rng(999)
-    val = []
-    for i in range(100 if args.smoke else 600):
-        kind = ["mark", "reg", "free", "char"][i % 4]
-        g, t = sample_field(train_bank, val_rng, kind)
-        val.append((prep(g), t, DIGITS if kind == "mark" else CHARSET))
     print(f"data ready after {(time.time() - script_start) / 60:.1f} min", flush=True)
 
-    model = FieldRecognizer().to(device)
-    hits = [args.init] if os.path.exists(args.init) else glob.glob(os.path.join(args.data_dir, "**", args.init), recursive=True)
-    if hits:
-        model.load_state_dict(torch.load(hits[0], map_location=device))
-        print("fine-tuning from", hits[0], flush=True)
-    params = sum(p.numel() for p in model.parameters())
+    init_hits = [args.init] if os.path.exists(args.init) else glob.glob(os.path.join(args.data_dir, "**", args.init), recursive=True)
+    init_state = torch.load(init_hits[0], map_location="cpu") if init_hits else None
+    print("init", init_hits[0] if init_hits else "scratch", flush=True)
+    params = sum(p.numel() for p in FieldRecognizer().parameters())
     print("params", params, flush=True)
-    loader = torch.utils.data.DataLoader(
-        FieldStream(train_bank, seed=1), batch_size=args.batch, num_workers=args.workers,
-        collate_fn=collate, persistent_workers=args.workers > 0,
-    )
-    opt = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=2e-3, total_steps=args.steps, pct_start=0.05)
-    ctc = nn.CTCLoss(blank=0, zero_infinity=True)
 
-    model.train()
-    start, step = time.time(), 0
-    deadline = script_start + (args.max_minutes - args.export_minutes) * 60
-    best_acc, best_state, stale, stop_reason = -1.0, None, 0, "steps"
-    for xs, lengths, targets, target_lengths in loader:
-        xs = xs.to(device, non_blocking=True)
-        logits = model.train_logits(xs, lengths)
-        log_probs = logits.log_softmax(-1).transpose(0, 1)  # [T, N, C]
-        loss = ctc(log_probs, targets, lengths, target_lengths)
-        opt.zero_grad(set_to_none=True)
-        loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-        opt.step()
-        sched.step()
-        step += 1
-        if step % 500 == 0 or step == args.steps or args.smoke and step % 50 == 0:
-            rate = step * args.batch / (time.time() - start)
-            print(f"step {step} loss {loss.item():.4f} samples/s {rate:.0f}", flush=True)
-        if step % args.val_every == 0 or step >= args.steps:
-            acc = validate(model, val, device)
-            print(f"step {step} val_exact {acc:.4f}", flush=True)
-            if acc > best_acc:
-                best_acc, stale = acc, 0
-                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+    tasks = ["all"] if args.task == "all" else ["reg", "marks"] if args.task == "both" else [args.task]
+    results = {"params": params, "smoke": args.smoke, "batch": args.batch, "tasks": {}}
+    # Time is shared out evenly: every run of every task gets the same budget.
+    runs_left = len(tasks) * args.seeds
+
+    def train_run(task, seed, val, budget_s):
+        """One fine-tuning run with an EMA of the weights; returns the best EMA state."""
+        torch.manual_seed(seed)
+        model = FieldRecognizer().to(device)
+        if init_state is not None:
+            model.load_state_dict(init_state)
+        ema = torch.optim.swa_utils.AveragedModel(
+            model, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(args.ema), use_buffers=True)
+        loader = torch.utils.data.DataLoader(
+            FieldStream(train_bank, seed=1000 * seed + 1, task=task), batch_size=args.batch,
+            num_workers=args.workers, collate_fn=collate, persistent_workers=False,
+        )
+        opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+        sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=args.steps, pct_start=0.05)
+        ctc = nn.CTCLoss(blank=0, zero_infinity=True)
+        model.train()
+        t0, step = time.time(), 0
+        best, best_state, stale, why = -1.0, None, 0, "steps"
+        for xs, lengths, targets, target_lengths in loader:
+            xs = xs.to(device, non_blocking=True)
+            log_probs = model.train_logits(xs, lengths).log_softmax(-1).transpose(0, 1)
+            loss = ctc(log_probs, targets, lengths, target_lengths)
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            opt.step()
+            sched.step()
+            ema.update_parameters(model)
+            step += 1
+            if step % 500 == 0:
+                print(f"  [{task} s{seed}] step {step} loss {loss.item():.4f}", flush=True)
+            if step % args.val_every == 0 or step >= args.steps:
+                m = val_metrics(ema.module, val, device)
+                # Exact match, with a trusted-but-wrong reading costing 5x a miss.
+                key = m["exact"] - 5 * m["silent"]
+                print(f"  [{task} s{seed}] step {step} ema {m}", flush=True)
+                if key > best:
+                    best, stale = key, 0
+                    best_state = {k: v.detach().cpu().clone() for k, v in ema.module.state_dict().items()}
+                else:
+                    stale += 1
+                    if stale >= args.patience:
+                        why = "early stop"
+                        break
+            if step >= args.steps:
+                break
+            if time.time() - t0 > budget_s:
+                why = "time budget"
+                break
+        print(f"  [{task} s{seed}] stopped ({why}) at step {step}, best {best:.4f}", flush=True)
+        return best_state
+
+    def as_model(state):
+        m = FieldRecognizer().to(device)
+        m.load_state_dict(state)
+        return m.eval()
+
+    def mix(states, weights):
+        out = {}
+        for k in states[0]:
+            if states[0][k].dtype.is_floating_point:
+                out[k] = sum(w * st[k].float() for st, w in zip(states, weights))
             else:
-                stale += 1
-                if stale >= args.patience:
-                    stop_reason = "early stop (no val improvement)"
-                    break
-        if step >= args.steps:
-            break
-        if time.time() > deadline:
-            stop_reason = "wall-clock cap"
-            break
-    train_minutes = (time.time() - start) / 60
-    print(f"training stopped: {stop_reason} at step {step}, best val {best_acc:.4f}", flush=True)
-    if best_state is not None:
-        model.load_state_dict(best_state)
+                out[k] = states[0][k].clone()  # BatchNorm batch counter
+        return out
 
-    model.eval().cpu()
-    torch.save(model.state_dict(), os.path.join(args.out_dir, "field_recognizer.pt"))
-    onnx_path = os.path.join(args.out_dir, "field_recognizer.onnx")
-    torch.onnx.export(
-        model, torch.zeros(1, 1, INPUT_HEIGHT, 64), onnx_path,
-        input_names=["input"], output_names=["probs"],
-        dynamic_axes={"input": {3: "width"}, "probs": {1: "frames"}},
-        opset_version=17, dynamo=False,
-    )
-    from onnxruntime.quantization import QuantType, quantize_dynamic
+    def fit_temperature(model, val):
+        """The temperature that keeps the most readings trusted while cutting
+        trusted-but-wrong readings: folded into the head, so the app's
+        confidence numbers mean what the review gate assumes."""
+        best_t, best_key = 1.0, None
+        for t in (0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0):
+            m = val_metrics(model, val, device, temperature=t)
+            key = m["accepted"] - 10 * m["silent"]
+            if best_key is None or key > best_key:
+                best_t, best_key = t, key
+        return best_t
 
-    int8_path = os.path.join(args.out_dir, "field_recognizer.int8.onnx")
-    # Convs stay fp32: dynamic ConvInteger ran ~15x slower than fp32 Conv on CPU
-    # in the smoke test. Only the LSTM and the classifier are quantized.
-    quantize_dynamic(
-        onnx_path, int8_path, weight_type=QuantType.QInt8,
-        op_types_to_quantize=["LSTM", "MatMul", "Gemm"],
-    )
+    for task in tasks:
+        val = task_val(train_bank, task, 200 if args.smoke else args.val_n, seed=999)
+        val_pick = task_val(train_bank, task, 200 if args.smoke else args.val_n, seed=4242)
+        states = []
+        for seed in range(args.seeds):
+            budget = (script_start + (args.max_minutes - args.export_minutes) * 60 - time.time()) / runs_left
+            runs_left -= 1
+            st = train_run(task, seed, val, budget)
+            if st is not None:
+                states.append(st)
+        report = {}
+        # Candidates, judged on a second validation set the runs never saw.
+        cands = {f"seed{i}": st for i, st in enumerate(states)}
+        cands["soup"] = mix(states, [1 / len(states)] * len(states))
+        if init_state is not None:
+            cands["init"] = {k: v.float() if v.dtype.is_floating_point else v for k, v in init_state.items()}
+            # WiSE-FT: interpolate the starting model and the soup.
+            for a in (0.25, 0.5, 0.75):
+                cands[f"wise{a}"] = mix([init_state, cands["soup"]], [1 - a, a])
+        for name, st in cands.items():
+            m = val_metrics(as_model(st), val_pick, device)
+            report[name] = m
+            print(f"[{task}] {name} {m}", flush=True)
+        pick = max((n for n in cands if n != "init"), key=lambda n: report[n]["exact"] - 5 * report[n]["silent"])
+        model = as_model(cands[pick])
+        temp = fit_temperature(model, val_pick)
+        print(f"[{task}] picked {pick}, temperature {temp}", flush=True)
+        with torch.no_grad():
+            model.head.weight.div_(temp)
+            model.head.bias.div_(temp)
+        model = model.cpu()
+        suffix = "" if task == "all" else f"_{task}"
+        torch.save(model.state_dict(), os.path.join(args.out_dir, f"field_recognizer{suffix}.pt"))
+        onnx_path = os.path.join(args.out_dir, f"field_recognizer{suffix}.onnx")
+        torch.onnx.export(
+            model, torch.zeros(1, 1, INPUT_HEIGHT, 64), onnx_path,
+            input_names=["input"], output_names=["probs"],
+            dynamic_axes={"input": {0: "batch", 3: "width"}, "probs": {0: "batch", 1: "frames"}},
+            opset_version=17, dynamo=False,
+        )
+        task_sets = {k: v for k, v in sets.items() if task == "all" or k in TASK_SETS[task]}
+        entry = {"picked": pick, "temperature": temp, "candidates": report,
+                 "heldout": evaluate_onnx(onnx_path, task_sets)}
+        if init_state is not None:
+            # The starting model on the same held-out sets, for comparison.
+            base = as_model(cands["init"]).cpu()
+            base_path = os.path.join(args.out_dir, "baseline.onnx")
+            torch.onnx.export(base, torch.zeros(1, 1, INPUT_HEIGHT, 64), base_path, input_names=["input"],
+                              output_names=["probs"], dynamic_axes={"input": {0: "batch", 3: "width"}, "probs": {0: "batch", 1: "frames"}},
+                              opset_version=17, dynamo=False)
+            entry["baseline_heldout"] = evaluate_onnx(base_path, task_sets)
+        results["tasks"][task] = entry
+        with open(os.path.join(args.out_dir, "results.json"), "w") as f:
+            json.dump(results, f, indent=2)
 
-    results = {
-        "params": params,
-        "steps": step,
-        "stop_reason": stop_reason,
-        "best_val_exact": round(best_acc, 4),
-        "total_minutes": round((time.time() - script_start) / 60, 1),
-        "batch": args.batch,
-        "train_minutes": round(train_minutes, 1),
-        "smoke": args.smoke,
-        "size_bytes": {p: os.path.getsize(os.path.join(args.out_dir, p)) for p in ("field_recognizer.onnx", "field_recognizer.int8.onnx")},
-        "fp32": evaluate_onnx(onnx_path, sets),
-        "int8": evaluate_onnx(int8_path, sets),
-    }
+    results["total_minutes"] = round((time.time() - script_start) / 60, 1)
     with open(os.path.join(args.out_dir, "results.json"), "w") as f:
         json.dump(results, f, indent=2)
     print(json.dumps(results, indent=2))

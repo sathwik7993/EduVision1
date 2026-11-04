@@ -54,7 +54,7 @@ class Scanner(private val context: Context, private val templates: TemplateStore
     private fun readerLocked(): SheetReader = reader ?: run {
         check(OpenCVLoader.initLocal()) { "OpenCV failed to load" }
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
-        SheetReader(FieldModel(asset(MODEL), threads = 2)) {
+        SheetReader(FieldModel(asset(MODEL), threads = 1), SheetReader.defaultThreads()) {
             textReader ?: PrintedTextReader(asset("ppocr_v3_det.onnx"), asset("ppocr_v3_rec.onnx"), threads).also { textReader = it }
         }.also { reader = it }
     }

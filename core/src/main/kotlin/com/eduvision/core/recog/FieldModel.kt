@@ -21,13 +21,19 @@ class Probs(val data: FloatArray, val frames: Int, val classes: Int) {
  * The handwriting CRNN from training/recognizer (input `input` [1,1,32,W],
  * output `probs` [1,T,37]), run by ONNX Runtime on the CPU.
  */
-class FieldModel(modelBytes: ByteArray, threads: Int = 2) : AutoCloseable {
+class FieldModel(
+    modelBytes: ByteArray,
+    threads: Int = 2,
+    /** Extra session options, e.g. an execution provider to compare on a device. */
+    configure: (OrtSession.SessionOptions) -> Unit = {},
+) : AutoCloseable {
     private val env = OrtEnvironment.getEnvironment()
     private val session: OrtSession = OrtSession.SessionOptions().use { opts ->
         // Entry-level phones have 2-4 big cores; more threads than that makes a
         // model this small slower, not faster.
         opts.setIntraOpNumThreads(threads)
         opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+        configure(opts)
         env.createSession(modelBytes, opts)
     }
 
@@ -43,6 +49,36 @@ class FieldModel(modelBytes: ByteArray, threads: Int = 2) : AutoCloseable {
                 return Probs(arr, shape[1].toInt(), shape[2].toInt())
             }
         }
+    }
+
+    /**
+     * Several crops in one model call (one call costs far more than its
+     * arithmetic on a phone). Crops are grouped by their padded input width,
+     * so each crop gets exactly the input, and the output, it would alone.
+     */
+    fun runAll(crops: List<Mat>): List<Probs> {
+        val prepared = crops.map { prepare(it) }
+        val out = arrayOfNulls<Probs>(crops.size)
+        prepared.indices.groupBy { prepared[it].second }.forEach { (width, idx) ->
+            val plane = HEIGHT * width
+            val data = FloatArray(idx.size * plane)
+            idx.forEachIndexed { n, i -> System.arraycopy(prepared[i].first, 0, data, n * plane, plane) }
+            OnnxTensor.createTensor(env, FloatBuffer.wrap(data), longArrayOf(idx.size.toLong(), 1, HEIGHT.toLong(), width.toLong())).use { t ->
+                session.run(mapOf("input" to t)).use { res ->
+                    val tensor = res[0] as OnnxTensor
+                    val shape = tensor.info.shape
+                    val frames = shape[1].toInt()
+                    val classes = shape[2].toInt()
+                    val buf = tensor.floatBuffer
+                    idx.forEachIndexed { n, i ->
+                        val arr = FloatArray(frames * classes)
+                        buf.position(n * frames * classes); buf.get(arr)
+                        out[i] = Probs(arr, frames, classes)
+                    }
+                }
+            }
+        }
+        return out.map { it!! }
     }
 
     override fun close() = session.close()

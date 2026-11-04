@@ -49,12 +49,13 @@ class DeviceBenchmarkTest {
 
         assertTrue(OpenCVLoader.initLocal())
         report("load_opencv_ms", lap())
-        val fieldModel = FieldModel(model("field_recognizer_v3.onnx"), threads = 2)
+        val fieldModel = FieldModel(model("field_recognizer_v3.onnx"), threads = 1)
         report("load_field_model_ms", lap())
         val text = PrintedTextReader(model("ppocr_v3_det.onnx"), model("ppocr_v3_rec.onnx"),
             Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
         report("load_ocr_models_ms", lap())
-        val reader = SheetReader(fieldModel) { text }
+        // As the app runs it: fields in parallel, one thread per model call.
+        val reader = SheetReader(fieldModel, SheetReader.defaultThreads()) { text }
 
         val clean = gray("sheet_clean.png")
         lap()
@@ -65,25 +66,53 @@ class DeviceBenchmarkTest {
         report("layout_fields", template.fields.joinToString { it.kind.name })
 
         val truth = JSONObject(String(bench("truth.json")))
+        val names = truth.keys().asSequence().toList()
+
+        /** Reads every synthetic photo twice (the first pass warms up); reports pass 2. */
+        fun measure(tag: String, r: SheetReader): Pair<Int, Int> {
+            var right = 0
+            var total = 0
+            val totals = ArrayList<Long>()
+            for (pass in 1..2) for (name in names) {
+                val photo = gray(name)
+                val res = ScanValidator.validate(r.read(photo, template, layout.reference), template)
+                val want = truth.getJSONObject(name)
+                if (pass == 2) {
+                    listOf(res.registrationNo.value to want.getString("registration"), res.partA.value to want.getString("partA"),
+                        res.partB.value to want.getString("partB")).forEach { (got, w) -> total++; if (got == w) right++ }
+                    totals += res.timingsMs["total"]!!
+                    report("scan${tag}_$name", "${res.registrationNo.value} ${res.partA.value} ${res.partB.value} ${res.timingsMs}")
+                }
+                photo.release()
+            }
+            report("read_right$tag", "$right/$total")
+            report("scan_ms_median$tag", totals.sorted()[totals.size / 2])
+            report("scan_ms_max$tag", totals.max())
+            return right to total
+        }
+
+        // As the app runs it, then variants to choose the next default from
+        // device numbers: 0.4.0's one field at a time; int8 weights in the
+        // LSTM and head (identical results on the desktop tests); ONNX
+        // Runtime's XNNPACK kernels. Two rounds in turn, so a slow start or
+        // a background task on the phone does not decide the comparison.
+        val xnnpack: (ai.onnxruntime.OrtSession.SessionOptions) -> Unit = { it.addXnnpack(mapOf("intra_op_num_threads" to "1")) }
+        val fp32 = model("field_recognizer_v3.onnx")
+        val int8 = bench("field_recognizer_int8.onnx")
+        val variants = listOf<Pair<String, () -> SheetReader>>(
+            "" to { reader },
+            "_serial" to { SheetReader(FieldModel(fp32, threads = 2), 1) { text } },
+            "_int8" to { SheetReader(FieldModel(int8, threads = 1), SheetReader.defaultThreads()) { text } },
+            "_xnnpack" to { SheetReader(FieldModel(fp32, threads = 1, configure = xnnpack), SheetReader.defaultThreads()) { text } },
+            "_int8_xnnpack" to { SheetReader(FieldModel(int8, threads = 1, configure = xnnpack), SheetReader.defaultThreads()) { text } },
+        )
         var right = 0
         var total = 0
-        val totals = ArrayList<Long>()
-        // Twice: the first pass includes one-time warm-up (ORB on the reference, ORT kernels).
-        for (pass in 1..2) for (name in truth.keys()) {
-            val photo = gray(name)
-            val r = ScanValidator.validate(reader.read(photo, template, layout.reference), template)
-            val want = truth.getJSONObject(name)
-            if (pass == 2) {
-                listOf(r.registrationNo.value to want.getString("registration"), r.partA.value to want.getString("partA"),
-                    r.partB.value to want.getString("partB")).forEach { (got, w) -> total++; if (got == w) right++ }
-                totals += r.timingsMs["total"]!!
-            }
-            report("scan_${pass}_$name", "${r.registrationNo.value} ${r.partA.value} ${r.partB.value} ${r.timingsMs}")
-            photo.release()
+        for (round in 1..2) for ((tag, make) in variants) {
+            runCatching { make() }
+                .onSuccess { r -> measure("${tag}_r$round", r).let { if (tag == "" && round == 1) { right = it.first; total = it.second } } }
+                .onFailure { report("variant${tag}", "unavailable: ${it.message}") }
         }
-        report("read_right", "$right/$total")
-        report("scan_ms_median", totals.sorted()[totals.size / 2])
-        report("scan_ms_max", totals.max())
         assertTrue("read $right/$total", right >= total - 1)
     }
 }

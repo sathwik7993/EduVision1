@@ -38,7 +38,10 @@ class RealSheetsTest {
             nu.pattern.OpenCV.loadLocally()
             val models = File(root, "assets/models")
             text = PrintedTextReader(File(models, "ppocr_v3_det.onnx").readBytes(), File(models, "ppocr_v3_rec.onnx").readBytes())
-            reader = SheetReader(FieldModel((System.getenv("FIELD_MODEL")?.let(::File) ?: File(models, "field_recognizer_v3.onnx")).readBytes())) { text }
+            // FIELD_MODEL / REG_MODEL: candidate models to compare on the real sheets.
+            val marks = FieldModel((System.getenv("FIELD_MODEL")?.let(::File) ?: File(models, "field_recognizer_v3.onnx")).readBytes(), threads = 1)
+            val reg = System.getenv("REG_MODEL")?.let { FieldModel(File(it).readBytes(), threads = 1) } ?: marks
+            reader = SheetReader(marks, System.getenv("READER_THREADS")?.toInt() ?: SheetReader.defaultThreads(), reg) { text }
         }
 
         fun gray(name: String): Mat = Imgcodecs.imread(File(root, "sample_images/$name").path, Imgcodecs.IMREAD_GRAYSCALE)
