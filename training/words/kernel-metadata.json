@@ -1,0 +1,22 @@
+{
+  "id": "sathwikchappala/eduvision-word-recognizer-v1",
+  "title": "eduvision-word-recognizer-v1",
+  "code_file": "eduvision_words.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": [
+    "landlord/handwriting-recognition",
+    "thejashwinima/gnhk-handwriting-dataset",
+    "crawford/emnist"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [
+    "sathwikchappala/eduvision-field-recognizer-v5",
+    "sathwikchappala/eduvision-fetch-ppocrv5"
+  ],
+  "model_sources": []
+}
