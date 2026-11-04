@@ -1,0 +1,20 @@
+{
+  "b_photo_1.jpg": {
+    "registration": "19K41A0233",
+    "partA": "22",
+    "partB": "45",
+    "internal": "18"
+  },
+  "b_photo_2.jpg": {
+    "registration": "19K41A0251",
+    "partA": "30",
+    "partB": "38",
+    "internal": "20"
+  },
+  "b_photo_3.jpg": {
+    "registration": "19K41A02D7",
+    "partA": "15",
+    "partB": "50",
+    "internal": "16"
+  }
+}

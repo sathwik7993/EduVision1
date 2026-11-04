@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Sign-in only; scanning, recognition and export work offline. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Photos come from the document scanner, the system camera app or the
+         photo picker, so the app itself needs no camera or storage permission. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <application
+        android:name=".EduApp"
+        android:label="EduVision"
+        android:icon="@mipmap/launcher_icon"
+        android:theme="@style/Theme.EduVision"
+        android:enableOnBackInvokedCallback="true"
+        android:allowBackup="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Shares the exported workbook and hands the camera app a file to write. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

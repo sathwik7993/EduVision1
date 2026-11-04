@@ -56,3 +56,18 @@ The long-term vision is to turn EduVision into a practical, deployable product f
 By combining efficient on-device AI, reliable handwriting recognition, structured document extraction, and automated spreadsheet generation, EduVision aims to significantly reduce teachers' administrative workload while improving the speed, consistency, and reliability of academic record management.
 
 The ultimate objective is not simply to build an application that reads examination papers. It is to create a dependable, privacy-conscious, and commercially viable AI solution that educational institutions can deploy across a wide range of devices with minimal technical overhead.
+
+## Building and testing (native Android app)
+
+The app is a native Android app (Kotlin, Jetpack Compose) in `app/`; the
+recognition pipeline is a plain Kotlin module in `core/` that also runs on a
+desktop. Requires JDK 17+ and the Android SDK (platform 36).
+
+```
+./gradlew :core:test                 # full pipeline on sample_images/ and synthetic sheets
+./gradlew :app:testDebugUnitTest     # app tests (Robolectric)
+./gradlew :app:assembleRelease       # APKs per CPU type in app/build/outputs/apk/release
+```
+
+Status, accuracy and speed numbers: `docs/PROGRESS.md`. Device runs:
+`docs/testlab.md`.

@@ -1,0 +1,15 @@
+{
+  "id": "sathwikchappala/eduvision-ppocr-eval",
+  "title": "eduvision-ppocr-eval",
+  "code_file": "ppocr_eval.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": ["sathwikchappala/eduvision-field-recognizer-v3-output"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}
