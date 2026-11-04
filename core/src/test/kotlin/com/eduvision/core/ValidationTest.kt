@@ -14,6 +14,7 @@ import com.eduvision.core.validate.Roster
 import com.eduvision.core.validate.ScanValidator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -125,6 +126,18 @@ class ValidationTest {
         // The model was sure of an "S": the "5" chosen in its place is doubtful.
         val r = CtcDecoder.decode(probs('S' to 0.9f), DIGITS)
         assertTrue(r.confidence <= 0.1 + 1e-6)
+    }
+
+    @Test fun dateFieldsAreChecked() {
+        fun date(v: String) = ScanValidator.validate(result().copy(extras = listOf(
+            LabelledMark("Date of Exam", "", f(v), blocking = false))), template).extras.single().field
+        val y = java.time.LocalDate.now().year
+        assertNull(date("04/11/$y").issue)
+        assertNotNull(date("34/11/$y").issue)
+        val swapped = date("O4/11/$y")
+        assertEquals("04/11/$y", swapped.suggestion)
+        assertTrue(swapped.needsReview)
+        assertEquals("O4/11/$y", swapped.value) // never rewritten
     }
 
     @Test fun layoutWithoutPartTotalsCanBeSaved() {

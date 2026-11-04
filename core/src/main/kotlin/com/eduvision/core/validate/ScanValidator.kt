@@ -53,7 +53,7 @@ object ScanValidator {
             else w.copy(field = w.field.withIssue("${w.label} reads ${w.field.value}, but Part-A + Part-B = $derived"))
         }
 
-        val extras = result.extras.map { it.copy(field = it.field.withIssue(overMax(it.field, it.maxMarks))) }
+        val extras = result.extras.map { it.copy(field = checkDate(it.label, it.field.withIssue(overMax(it.field, it.maxMarks)))) }
 
         return result.copy(
             extras = extras,
@@ -63,6 +63,17 @@ object ScanValidator {
             questions = questions,
             writtenTotals = written,
         )
+    }
+
+    /**
+     * A date field must hold a real, recent date. A reading that is one only
+     * after reading letters as digits ("O4/11/2026") gets the date as a
+     * suggestion; one that is no date at all goes to review. Never rewritten.
+     */
+    private fun checkDate(label: String, f: ExtractedField): ExtractedField {
+        if (!Dates.isDateField(label) || f.edited || f.isEmpty) return f
+        val p = Dates.parse(f.value) ?: return f.withIssue("Not a valid date (day/month/year); check it")
+        return if (p.neededLookAlikes) f.withIssue("Check the date", p.canonical) else f
     }
 
     /** Problems that block saving even after the teacher typed a value. */
