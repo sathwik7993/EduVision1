@@ -185,3 +185,34 @@ class CorrectionStore(context: Context) {
 
     fun count() = File(dir, "index.jsonl").takeIf { it.exists() }?.readLines()?.size ?: 0
 }
+
+/**
+ * Written-field values teachers confirmed, per layout and field, with the
+ * number of sheets each was confirmed on. Repeated ones (a batch's course
+ * name, section) are offered when a later reading is close. Local only.
+ */
+class KnownValuesStore(context: Context) {
+    private val file = File(context.filesDir, "known_values.json")
+    private val serializer = kotlinx.serialization.builtins.MapSerializer(String.serializer(),
+        kotlinx.serialization.builtins.MapSerializer(String.serializer(),
+            kotlinx.serialization.builtins.MapSerializer(String.serializer(), Int.serializer())))
+
+    private fun all(): Map<String, Map<String, Map<String, Int>>> = if (!file.exists()) emptyMap()
+    else runCatching { json.decodeFromString(serializer, file.readText()) }.getOrDefault(emptyMap())
+
+    fun of(templateId: String, field: String) =
+        com.eduvision.core.validate.KnownValues(all()[templateId]?.get(field).orEmpty())
+
+    /** Counts each saved sheet's value of each of [fields] (field title -> value). */
+    fun record(templateId: String, fields: Map<String, String>) {
+        val all = all().toMutableMap()
+        val layout = all[templateId].orEmpty().toMutableMap()
+        fields.filterValues { it.isNotBlank() }.forEach { (f, v) ->
+            val counts = layout[f].orEmpty().toMutableMap()
+            counts[v.trim()] = (counts[v.trim()] ?: 0) + 1
+            layout[f] = counts
+        }
+        all[templateId] = layout
+        file.writeAtomically(json.encodeToString(serializer, all))
+    }
+}

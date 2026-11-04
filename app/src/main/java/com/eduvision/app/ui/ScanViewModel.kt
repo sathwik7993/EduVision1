@@ -81,7 +81,20 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun validate(r: ScanResult, t: SheetTemplate) =
-        ScanValidator.validate(r, t, app.roster.load(), app.results.registrations())
+        suggestKnown(ScanValidator.validate(r, t, app.roster.load(), app.results.registrations()), t)
+
+    /** Titles of the layout's written-word fields. */
+    private fun textFields(t: SheetTemplate) = t.fields.filter { it.kind == FieldKind.TEXT }.map { it.title }.toSet()
+
+    /** A written field close to a value confirmed on earlier sheets gets it as a one-tap suggestion. */
+    private fun suggestKnown(r: ScanResult, t: SheetTemplate): ScanResult {
+        val text = textFields(t)
+        return r.copy(extras = r.extras.map { m ->
+            if (m.label !in text || m.field.edited || m.field.suggestion != null) return@map m
+            val s = app.knownValues.of(t.id, m.label).suggest(m.field.value) ?: return@map m
+            m.copy(field = m.field.copy(suggestion = s))
+        })
+    }
 
     /** A value the teacher typed or confirmed: authoritative, then re-check the rest. */
     fun edit(update: (ScanResult) -> ScanResult) {
@@ -128,6 +141,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     fun save() {
         val s = state as? State.Ready ?: return
         app.results.save(s.result, s.scan.template.name)
+        val text = textFields(s.scan.template)
+        app.knownValues.record(s.scan.template.id, s.result.extras.filter { it.label in text }.associate { it.label to it.field.value })
         app.corrections.record(s.result, modelValues)
         reset()
     }

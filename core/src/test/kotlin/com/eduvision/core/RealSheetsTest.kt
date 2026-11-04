@@ -41,7 +41,10 @@ class RealSheetsTest {
             // FIELD_MODEL / REG_MODEL: candidate models to compare on the real sheets.
             val marks = FieldModel((System.getenv("FIELD_MODEL")?.let(::File) ?: File(models, "field_recognizer_v3.onnx")).readBytes(), threads = 1)
             val reg = System.getenv("REG_MODEL")?.let { FieldModel(File(it).readBytes(), threads = 1) } ?: marks
-            reader = SheetReader(marks, System.getenv("READER_THREADS")?.toInt() ?: SheetReader.defaultThreads(), reg) { text }
+            // HANDWRITING_REC: a recognition model for handwritten text fields.
+            val words = System.getenv("HANDWRITING_REC")?.let { PrintedTextReader(null, File(it).readBytes()) }
+            reader = SheetReader(marks, System.getenv("READER_THREADS")?.toInt() ?: SheetReader.defaultThreads(), reg,
+                words?.let { w -> { w } }) { text }
         }
 
         fun gray(name: String): Mat = Imgcodecs.imread(File(root, "sample_images/$name").path, Imgcodecs.IMREAD_GRAYSCALE)

@@ -55,7 +55,9 @@ class DeviceBenchmarkTest {
             Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
         report("load_ocr_models_ms", lap())
         // As the app runs it: fields in parallel, one thread per model call.
-        val reader = SheetReader(fieldModel, SheetReader.defaultThreads()) { text }
+        val words = PrintedTextReader(null, model("ppocr_v5_rec.onnx"), 1)
+        report("load_handwriting_model_ms", lap())
+        val reader = SheetReader(fieldModel, SheetReader.defaultThreads(), fieldModel, { words }) { text }
 
         val clean = gray("sheet_clean.png")
         lap()

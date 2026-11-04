@@ -47,8 +47,12 @@ class SheetReader(
     private val threads: Int = 1,
     /** Reads registration numbers and other letter+digit boxes. */
     private val regModel: FieldModel = model,
+    /** Reads handwritten words (names, courses); the printed-label reader when not given. */
+    private val handwriting: (() -> PrintedTextReader)? = null,
     private val textReader: () -> PrintedTextReader,
 ) {
+    private fun wordReader() = handwriting?.invoke() ?: textReader()
+
     private val aligners = HashMap<String, Pair<Mat, Aligner>>()
 
     /** Worker threads for the fields of one sheet; daemon threads, so they never keep a JVM alive. */
@@ -123,7 +127,7 @@ class SheetReader(
         val diagnostics = LinkedHashMap<String, String>()
         val contextNs = AtomicLong()
         val readNs = AtomicLong()
-        if (template.fields.any { it.kind == FieldKind.TEXT }) textReader() // created once, before the threads
+        if (template.fields.any { it.kind == FieldKind.TEXT }) wordReader() // created once, before the threads
         // Fields are independent: read them on several cores at once. The
         // model and OpenCV calls are thread-safe; the caches they share are
         // concurrent maps.
@@ -208,10 +212,18 @@ class SheetReader(
                 val area = if (f.free) pb else CellFinder.findCell(patch, pb)?.inset(0.04, 2.0) ?: pb
                 val crop = CellFinder.crop(patch, area) ?: return ExtractedField("", 0.0, issue = "Box not found")
                 if (CellFinder.looksBlank(crop)) return ExtractedField("", BLANK_CONFIDENCE, crop = png(crop))
-                val (raw, conf) = textReader().recognize(crop, listOf(Box(0.0, 0.0, crop.cols().toDouble(), crop.rows().toDouble()))).first()
-                val value = raw.trim().trimStart(':', '.', '-', ' ').trim()
-                // A blank line reads as nothing; that is a confident blank.
-                return ExtractedField(value, if (value.isEmpty()) max(conf, 0.95) else conf, rawText = raw, crop = png(crop))
+                val whole = listOf(Box(0.0, 0.0, crop.cols().toDouble(), crop.rows().toDouble()))
+                fun clean(t: String) = t.trim().trimStart(':', '.', '-', ' ').trim()
+                var (raw, conf) = wordReader().recognize(crop, whole).first()
+                // The handwriting model saw nothing in an inked box: a second
+                // opinion from the printed-text model (short block capitals).
+                if (clean(raw).isEmpty() && handwriting != null) textReader().recognize(crop, whole).first().let { raw = it.first; conf = it.second }
+                val value = clean(raw)
+                // Ink, yet nothing read: the writing was missed, not absent
+                // (an empty box is caught by looksBlank above).
+                if (value.isEmpty()) return ExtractedField("", 0.0, rawText = raw, crop = png(crop),
+                    issue = "Could not read the writing here; type it in")
+                return ExtractedField(value, conf, rawText = raw, crop = png(crop))
             }
             val text = f.kind == FieldKind.REGISTRATION || f.kind == FieldKind.TEXT
             val combCells = if (f.kind == FieldKind.REGISTRATION) t.registrationLength ?: f.cells else f.cells

@@ -25,9 +25,14 @@ data class TextLine(val text: String, val box: Box)
  * unknown layout; normal scans never run it. The same code runs on the phone
  * and in the desktop tests, which is why it replaces ML Kit.
  */
-class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int = 4) : AutoCloseable {
+class PrintedTextReader(
+    /** Null for a reader that only recognises given boxes (handwritten text fields). */
+    detModel: ByteArray?,
+    recModel: ByteArray,
+    threads: Int = 4,
+) : AutoCloseable {
     private val env = OrtEnvironment.getEnvironment()
-    private val det: OrtSession
+    private val det: OrtSession?
     private val rec: OrtSession
     private val dict: List<String>
 
@@ -36,7 +41,7 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
             setIntraOpNumThreads(threads)
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
         }
-        det = env.createSession(detModel, opts)
+        det = detModel?.let { env.createSession(it, opts) }
         rec = env.createSession(recModel, opts)
         // The character list ships inside the model's metadata; index 0 is
         // the CTC blank and a space follows the list.
@@ -78,6 +83,7 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
 
         val prob = Mat(h, w, CvType.CV_32F)
         OnnxTensor.createTensor(env, FloatBuffer.wrap(input), longArrayOf(1, 3, h.toLong(), w.toLong())).use { t ->
+            val det = checkNotNull(det) { "no detection model" }
             det.run(mapOf(det.inputNames.first() to t)).use { out ->
                 val buf = (out[0] as OnnxTensor).floatBuffer
                 val arr = FloatArray(buf.remaining()).also { buf.get(it) }
@@ -172,7 +178,7 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
     }
 
     override fun close() {
-        det.close(); rec.close()
+        det?.close(); rec.close()
     }
 
     companion object {
