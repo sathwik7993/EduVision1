@@ -69,13 +69,14 @@ class Aligner(reference: Mat) {
             // fits: one fit per patch of page, not one per field.
             val cell = 0.06 * refSide
             val key = Math.round(center.x / cell) * 10_000 + Math.round(center.y / cell)
-            return cache.getOrPut(key) {
+            return cache.computeIfAbsent(key) {
                 val c = Point((Math.round(center.x / cell)) * cell, (Math.round(center.y / cell)) * cell)
                 listOf(global) + listOf(0.3, 0.15).mapNotNull { fitNear(c, it)?.first }
             }
         }
 
-        private val cache = HashMap<Long, List<Mat>>()
+        /** Shared by the threads reading the fields of one sheet. */
+        private val cache = java.util.concurrent.ConcurrentHashMap<Long, List<Mat>>()
 
         private fun fitNear(center: Point, radius: Double): Triple<Mat, MatOfPoint2f, MatOfPoint2f>? {
             val r = radius * refSide

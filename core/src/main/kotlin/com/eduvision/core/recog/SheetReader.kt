@@ -19,6 +19,10 @@ import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
 import org.opencv.core.Rect
 import org.opencv.imgcodecs.Imgcodecs
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -38,10 +42,25 @@ class SheetNotRecognized(message: String) : Exception(message)
  * that falls outside the photo, is flagged for review whatever the model says.
  */
 class SheetReader(
+    /** Reads marks (digits); also everything else when [regModel] is not given. */
     private val model: FieldModel,
+    private val threads: Int = 1,
+    /** Reads registration numbers and other letter+digit boxes. */
+    private val regModel: FieldModel = model,
     private val textReader: () -> PrintedTextReader,
 ) {
     private val aligners = HashMap<String, Pair<Mat, Aligner>>()
+
+    /** Worker threads for the fields of one sheet; daemon threads, so they never keep a JVM alive. */
+    private val pool = Executors.newFixedThreadPool(threads.coerceAtLeast(1)) { r ->
+        Thread(r, "sheet-reader").apply { isDaemon = true }
+    }
+
+    private fun <T, R> java.util.concurrent.ExecutorService.submitAll(items: List<T>, f: (T) -> R): List<R> =
+        if (threads <= 1) items.map(f)
+        else items.map { submit<R> { f(it) } }.map {
+            try { it.get() } catch (e: ExecutionException) { throw e.cause ?: e }
+        }
 
     /** A new template for the layout in [photo], found from its printed labels. */
     class NewLayout(val template: SheetTemplate, val reference: Mat)
@@ -102,27 +121,32 @@ class SheetReader(
         val rw = reference.cols().toDouble()
         val rh = reference.rows().toDouble()
         val diagnostics = LinkedHashMap<String, String>()
-        var contextNs = 0L
-        var readNs = 0L
-        val reads = template.fields.map { f ->
+        val contextNs = AtomicLong()
+        val readNs = AtomicLong()
+        if (template.fields.any { it.kind == FieldKind.TEXT }) textReader() // created once, before the threads
+        // Fields are independent: read them on several cores at once. The
+        // model and OpenCV calls are thread-safe; the caches they share are
+        // concurrent maps.
+        val reads = pool.submitAll(template.fields) { f ->
             val box = Box(f.box.left * rw, f.box.top * rh, f.box.right * rw, f.box.bottom * rh)
             val c0 = System.nanoTime()
             val (h, score) = bestHomography(photo, reference, fit, box)
             val c1 = System.nanoTime()
             var v = readField(photo, h, box, f, template, rw, rh)
-            contextNs += c1 - c0; readNs += System.nanoTime() - c1
+            contextNs.addAndGet(c1 - c0); readNs.addAndGet(System.nanoTime() - c1)
             // The printed text and lines around the box do not look like the
             // template's: the value may come from a neighbouring cell.
-            diagnostics[f.title] = "context %.2f".format(score)
             if (score < CONTEXT_MIN) v = v.withIssue("Could not line this box up with the template; check the value")
-            f to v
+            Triple(f, v, score)
         }
+        reads.forEach { (f, _, score) -> diagnostics[f.title] = "context %.2f".format(score) }
         lap("fields")
-        timings["fields_context"] = contextNs / 1_000_000
-        timings["fields_read"] = readNs / 1_000_000
+        // Summed over the threads: CPU time, more than the wall time of "fields".
+        timings["fields_context"] = contextNs.get() / 1_000_000
+        timings["fields_read"] = readNs.get() / 1_000_000
         timings["total"] = (System.nanoTime() - clock) / 1_000_000
         timings["inliers"] = fit.inliers.toLong()
-        return assemble(reads, imagePath, timings).copy(diagnostics = diagnostics)
+        return assemble(reads.map { it.first to it.second }, imagePath, timings).copy(diagnostics = diagnostics)
     }
 
     /**
@@ -136,7 +160,7 @@ class SheetReader(
         val span = 1 + 2 * CONTEXT_MARGIN
         val scale = minOf(48.0 / max(box.h, 1.0), 256.0 / max(span * box.w, 1.0)).coerceIn(0.2, 3.0)
         val sigma = max(1.5, 6.0 * scale * box.h / 48.0)
-        val (ref, mask) = refContext.getOrPut(System.identityHashCode(reference) to box) {
+        val (ref, mask) = refContext.computeIfAbsent(System.identityHashCode(reference) to box) {
             val (r, rb) = CellFinder.warpPatch(reference, identity(), box, scale, CONTEXT_MARGIN)
             val m = Mat(r.size(), CvType.CV_8U, Scalar(255.0))
             Imgproc.rectangle(m, Point(rb.x0, rb.y0), Point(rb.x1, rb.y1), Scalar(0.0), -1)
@@ -149,7 +173,7 @@ class SheetReader(
     }
 
     /** The reference side of the context check, per (reference image, box): the same on every scan. */
-    private val refContext = HashMap<Pair<Int, Box>, Pair<Mat, Mat>>()
+    private val refContext = ConcurrentHashMap<Pair<Int, Box>, Pair<Mat, Mat>>()
 
     private fun correlation(a: Mat, b: Mat, mask: Mat, sigma: Double): Double {
         val fa = Mat(); val fb = Mat()
@@ -194,14 +218,14 @@ class SheetReader(
             if (combCells > 1) {
                 val mask = if (f.kind == FieldKind.REGISTRATION) t.registrationMask
                     else if (text) null else "D".repeat(combCells)
-                CellFinder.findComb(patch, pb, combCells)?.let { return readComb(patch, it, mask) }
+                CellFinder.findComb(patch, pb, combCells)?.let { return readComb(patch, it, mask, if (text) regModel else model) }
             }
             val cell = CellFinder.findCell(patch, pb)
             val area = cell?.inset(0.05, 2.0) ?: pb
             val crop = CellFinder.crop(patch, area) ?: return ExtractedField("", 0.0, issue = "Box not found")
             if (cell != null && CellFinder.looksBlank(crop)) return ExtractedField("", BLANK_CONFIDENCE, crop = png(crop))
             val allowed = if (text) CHARSET else DIGITS
-            val r = CtcDecoder.decode(model.run(crop), allowed)
+            val r = CtcDecoder.decode((if (text) regModel else model).run(crop), allowed)
             return ExtractedField(
                 r.text, r.confidence, rawText = r.text, crop = png(crop),
                 issue = if (cell == null) "Could not find the printed box; check the value" else null,
@@ -270,17 +294,21 @@ class SheetReader(
      * Reading box by box (borders trimmed) beat reading the comb as one strip
      * on the sample sheets: as a strip, CTC merges the "66" of adjacent boxes.
      */
-    private fun readComb(patch: Mat, cells: List<Box>, mask: String?): ExtractedField {
+    private fun readComb(patch: Mat, cells: List<Box>, mask: String?, model: FieldModel): ExtractedField {
         val text = StringBuilder()
         val alt = StringBuilder()
         var hasAlt = false
         var confidence = 1.0
-        for ((i, c) in cells.withIndex()) {
-            val crop = CellFinder.crop(patch, c.inset(0.06, 1.0)) ?: continue
-            // An unfilled box (e.g. only "23" written): no character, no model run.
-            if (CellFinder.looksBlank(crop)) { alt.append(""); continue }
+        // An unfilled box (e.g. only "23" written): no character, no model run.
+        val written = cells.withIndex().mapNotNull { (i, c) ->
+            CellFinder.crop(patch, c.inset(0.06, 1.0))?.takeUnless { CellFinder.looksBlank(it) }?.let { i to it }
+        }
+        // All boxes of the comb in one model call.
+        val probs = model.runAll(written.map { it.second })
+        for ((k, w) in written.withIndex()) {
+            val i = w.first
             val maskChar = mask?.getOrNull(i)
-            val r = CtcDecoder.decode(model.run(crop), CtcDecoder.allowedFor(maskChar))
+            val r = CtcDecoder.decode(probs[k], CtcDecoder.allowedFor(maskChar))
             // A box holds one character; two means the model split a stroke.
             val ch = r.text.take(1)
             text.append(ch)
@@ -339,6 +367,13 @@ class SheetReader(
         fun scaleFor(b: Box) = (96.0 / max(b.h, 1.0)).coerceIn(1.0, 6.0)
 
         fun identity(): Mat = Mat.eye(3, 3, CvType.CV_64F)
+
+        /**
+         * Field threads for this machine: one per core up to 4. Each model
+         * call then runs single-threaded, which for a model this small
+         * beats splitting one call over cores.
+         */
+        fun defaultThreads() = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
 
         fun png(m: Mat): ByteArray {
             val buf = MatOfByte()
