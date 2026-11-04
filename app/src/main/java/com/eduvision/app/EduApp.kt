@@ -18,6 +18,7 @@ class EduApp : Application() {
     val results by lazy { ResultsStore(this) }
     val roster by lazy { RosterStore(this) }
     val corrections by lazy { CorrectionStore(this) }
+    val knownValues by lazy { com.eduvision.app.data.KnownValuesStore(this) }
     val scanner by lazy { Scanner(this, templates) }
     val auth by lazy { AuthService(getString(R.string.default_web_client_id)) }
 

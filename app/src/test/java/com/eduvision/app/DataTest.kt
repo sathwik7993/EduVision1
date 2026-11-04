@@ -66,4 +66,14 @@ class DataTest {
         assertEquals(listOf("Registration No", "Part-A", "Part-B", "Total", "Internal", "Course code", "Scanned At", "Layout"), rows[0])
         assertEquals(listOf("19K41A0233", "0", "0", "0", "18", "CS301"), rows[1].take(6))
     }
+
+    @Test fun confirmedCourseNameIsSuggestedFromTheSecondSheetOn() {
+        val store = com.eduvision.app.data.KnownValuesStore(context)
+        store.record("t1", mapOf("Course Name" to "Social Networks", "Name of the Student" to "CH.SATHWIK"))
+        org.junit.Assert.assertNull(store.of("t1", "Course Name").suggest("SoualNehuorks"))
+        store.record("t1", mapOf("Course Name" to "Social Networks", "Name of the Student" to "B.RAVI"))
+        assertEquals("Social Networks", store.of("t1", "Course Name").suggest("SoualNehuorks"))
+        org.junit.Assert.assertNull(store.of("t1", "Name of the Student").suggest("CH.SATHWIR"))
+        org.junit.Assert.assertNull(store.of("t2", "Course Name").suggest("SoualNehuorks"))
+    }
 }
