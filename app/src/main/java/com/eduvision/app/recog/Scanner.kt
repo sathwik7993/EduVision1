@@ -54,10 +54,14 @@ class Scanner(private val context: Context, private val templates: TemplateStore
     private fun readerLocked(): SheetReader = reader ?: run {
         check(OpenCVLoader.initLocal()) { "OpenCV failed to load" }
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
-        val marks = FieldModel(asset(MODEL), threads = 1)
+        // v6 marks and registration models read every box under small crop
+        // changes; v5 (trained apart) must agree, or the box goes to review.
+        val marks = FieldModel(asset(MARKS_MODEL), threads = 1)
+        val reg = FieldModel(asset(REG_MODEL), threads = 1)
+        val check = FieldModel(asset(MODEL), threads = 1)
         // Loaded on first need, like the label OCR: only layouts with written words use it.
         val words by lazy { PrintedTextReader(null, asset(HANDWRITING), 1) }
-        SheetReader(marks, SheetReader.defaultThreads(), marks, { words }) {
+        SheetReader(marks, SheetReader.defaultThreads(), reg, { words }, augment = true, checkModel = check) {
             textReader ?: PrintedTextReader(asset("ppocr_v3_det.onnx"), asset("ppocr_v3_rec.onnx"), threads).also { textReader = it }
         }.also { reader = it }
     }
@@ -147,6 +151,8 @@ class Scanner(private val context: Context, private val templates: TemplateStore
 
     companion object {
         const val MODEL = "field_recognizer_v3.onnx"
+        const val MARKS_MODEL = "field_recognizer_v6_marks.onnx"
+        const val REG_MODEL = "field_recognizer_v6_reg.onnx"
         const val HANDWRITING = "ppocr_v5_rec.onnx"
         private const val MAX_SIDE = 2400
 

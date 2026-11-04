@@ -23,8 +23,8 @@ android {
         applicationId = "com.example.eduvision_0_1"
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.4.2"
+        versionCode = 7
+        versionName = "0.4.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
