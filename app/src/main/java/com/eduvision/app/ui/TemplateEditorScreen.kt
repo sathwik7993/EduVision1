@@ -101,7 +101,8 @@ private data class Draft(val index: Int?, val box: NormBox, val row: NormBox?, v
 @Composable
 fun TemplateEditorScreen(app: EduApp, id: String, setup: Boolean = false, onBack: () -> Unit, onSaved: () -> Unit = onBack) {
     val original = remember { app.templates.get(id) }
-    if (original == null) { onBack(); return }
+    // Layout deleted: leave once, not on every recomposition.
+    if (original == null) { androidx.compose.runtime.LaunchedEffect(Unit) { onBack() }; return }
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf(original.name) }
     var mask by remember { mutableStateOf(original.registrationMask.orEmpty()) }
