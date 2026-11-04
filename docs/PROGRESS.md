@@ -244,3 +244,26 @@ Written-field values teachers confirm are remembered per layout
 (`KnownValuesStore`); one confirmed on 2+ sheets is offered as "Use ..."
 when a later reading is close (edit distance <= 40%, ties refused). Never
 filled in silently.
+
+## v6 recognizers (Kaggle `eduvision-field-recognizer-v6`, T4, 76 min): not shipped
+
+Separate registration and marks models fine-tuned from v5: 3 seeds each
+with an EMA of the weights, a uniform soup, WiSE interpolation with v5 and a
+temperature fit, picked on a second validation set (seed 2 won both; the
+soup was within 0.1% of the best seed; temperature 1.0).
+
+Synthetic held-out (EMNIST test glyphs), v5 -> v6 exact / trusted-but-wrong:
+
+| set | exact | silent |
+|---|---|---|
+| reg_box (one comb box) | 0.823 -> 0.866 | 0.0075 -> 0.0065 |
+| reg_comb | 0.628 -> 0.669 | 0.018 -> 0.0245 |
+| marks_exam | 0.970 -> 0.979 | 0.0065 -> 0.0080 |
+| marks_cell | 0.961 -> 0.971 | 0.0105 -> 0.0095 |
+
+On the real sheets it read exactly what v5 reads (34/34, 9/9, booklet
+15/17, CAT 6/6, 0 silent). The marks model is more confident on real marks
+(fewer reviews) but read a synthetic "52" as "5" at 0.93 (caught only by
+the totals check); the registration model is less confident on all 9 real
+registration numbers. No gain in values read right, one confident miss:
+v5 stays. The weights are kept in the kernel output.
