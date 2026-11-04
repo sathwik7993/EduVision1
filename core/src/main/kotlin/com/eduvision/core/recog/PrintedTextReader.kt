@@ -25,7 +25,13 @@ data class TextLine(val text: String, val box: Box)
  * unknown layout; normal scans never run it. The same code runs on the phone
  * and in the desktop tests, which is why it replaces ML Kit.
  */
-class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int = 4) : AutoCloseable {
+class PrintedTextReader(
+    detModel: ByteArray,
+    recModel: ByteArray,
+    threads: Int = 4,
+    /** Extra session options, e.g. an execution provider to compare on a device. */
+    configure: (OrtSession.SessionOptions) -> Unit = {},
+) : AutoCloseable {
     private val env = OrtEnvironment.getEnvironment()
     private val det: OrtSession
     private val rec: OrtSession
@@ -35,6 +41,7 @@ class PrintedTextReader(detModel: ByteArray, recModel: ByteArray, threads: Int =
         val opts = OrtSession.SessionOptions().apply {
             setIntraOpNumThreads(threads)
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            configure(this)
         }
         det = env.createSession(detModel, opts)
         rec = env.createSession(recModel, opts)
