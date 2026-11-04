@@ -149,6 +149,7 @@ The Flutter app took 10-15 s per scan on the phone. Phones: see below.
 | Virtual Arm phone, 0.4.0, all 21 fields of the synthetic sheet | 422 ms | 8.0 s | 12/12 |
 | Samsung Galaxy A03s, 0.4.1 (fields in parallel), 21 fields | 846-1005 ms (0.4.0 way: 1581-1779 ms) | 14.9 s | 12/12 |
 | Virtual Arm phone, 0.4.1, 21 fields | 210-224 ms (0.4.0 way: 247-277 ms) | 5.8 s | 12/12 |
+| Samsung Galaxy A03s, 0.4.2 (+ PP-OCRv5 for the 3 text fields) | 800-1106 ms | 15.4 s | 12/12 |
 
 ### Speed (0.4.1)
 
@@ -229,3 +230,17 @@ On Test Lab: see `docs/testlab.md`.
   teacher taps those boxes (one tap each).
 - Writing on a line (no printed box) cannot be snapped; the teacher draws it.
 - `app/google-services.json` is tracked (as before).
+
+## Handwritten words (0.4.2)
+
+Text fields (name, course, section...) are read by PP-OCRv5 mobile
+recognition (`assets/models/ppocr_v5_rec.onnx`, Apache-2.0); PP-OCRv3 answers
+when it reads nothing. Ink read as nothing goes to review. On the two real
+forms (kept out of the repo): 21/23 right (PP-OCRv3 alone: 19/23), 0 wrong
+and unflagged. PP-OCRv5 server read the same but took 3.3 s per line on one
+desktop core.
+
+Written-field values teachers confirm are remembered per layout
+(`KnownValuesStore`); one confirmed on 2+ sheets is offered as "Use ..."
+when a later reading is close (edit distance <= 40%, ties refused). Never
+filled in silently.
