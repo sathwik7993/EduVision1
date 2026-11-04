@@ -245,7 +245,7 @@ Written-field values teachers confirm are remembered per layout
 when a later reading is close (edit distance <= 40%, ties refused). Never
 filled in silently.
 
-## v6 recognizers (Kaggle `eduvision-field-recognizer-v6`, T4, 76 min): not shipped
+## v6 recognizers (Kaggle `eduvision-field-recognizer-v6`, T4, 76 min)
 
 Separate registration and marks models fine-tuned from v5: 3 seeds each
 with an EMA of the weights, a uniform soup, WiSE interpolation with v5 and a
@@ -265,5 +265,27 @@ On the real sheets it read exactly what v5 reads (34/34, 9/9, booklet
 15/17, CAT 6/6, 0 silent). The marks model is more confident on real marks
 (fewer reviews) but read a synthetic "52" as "5" at 0.93 (caught only by
 the totals check); the registration model is less confident on all 9 real
-registration numbers. No gain in values read right, one confident miss:
-v5 stays. The weights are kept in the kernel output.
+registration numbers. Alone, no gain in values read right and one
+confident miss, so 0.4.2 kept v5.
+
+### 0.4.3: v6 with augmented reads, cross-checked by v5
+
+Each box is read 4 times in one batched call (as cut, 4% tighter, 4% looser,
+shifted 1 px); the majority reading wins, its confidence is the least
+certain agreeing read times the share agreeing. v5 reads the box too; if it
+reads otherwise, the confidence is capped at 0.5 (review). Averaging the two
+models' probabilities instead was worse (their CTC alignments differ).
+
+Held-out synthetic (1,000 each), exact / trusted-but-wrong / auto-accepted:
+
+| set | v5 (0.4.2) | v6 + augment + v5 check (0.4.3) |
+|---|---|---|
+| marks_exam | 0.965 / 0.0070 / 0.789 | 0.979 / 0.0050 / 0.851 |
+| marks_cell | 0.958 / 0.0110 / 0.824 | 0.975 / 0.0050 / 0.832 |
+| reg_box | 0.806 / 0.0110 / 0.538 | 0.849 / 0.0040 / 0.503 |
+| reg_comb | 0.605 / 0.0180 / 0.273 | 0.654 / 0.0030 / 0.157 |
+| reg_exam | 0.627 / 0.0270 / 0.290 | 0.677 / 0.0060 / 0.190 |
+
+Real sheets: 34/34, 9/9, booklet 15/17, CAT 6/6, 0 silent, 16 fields to
+review on the 9 photos (as 0.4.2). Synthetic sheets 11/12: the "52" read as
+"5" now goes to review at 0.50.

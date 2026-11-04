@@ -50,14 +50,17 @@ class DeviceBenchmarkTest {
         assertTrue(OpenCVLoader.initLocal())
         report("load_opencv_ms", lap())
         val fieldModel = FieldModel(model("field_recognizer_v3.onnx"), threads = 1)
-        report("load_field_model_ms", lap())
+        val marksModel = FieldModel(model("field_recognizer_v6_marks.onnx"), threads = 1)
+        val regModel = FieldModel(model("field_recognizer_v6_reg.onnx"), threads = 1)
+        report("load_field_models_ms", lap())
         val text = PrintedTextReader(model("ppocr_v3_det.onnx"), model("ppocr_v3_rec.onnx"),
             Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
         report("load_ocr_models_ms", lap())
         // As the app runs it: fields in parallel, one thread per model call.
         val words = PrintedTextReader(null, model("ppocr_v5_rec.onnx"), 1)
         report("load_handwriting_model_ms", lap())
-        val reader = SheetReader(fieldModel, SheetReader.defaultThreads(), fieldModel, { words }) { text }
+        val reader = SheetReader(marksModel, SheetReader.defaultThreads(), regModel, { words },
+            augment = true, checkModel = fieldModel) { text }
 
         val clean = gray("sheet_clean.png")
         lap()
@@ -96,20 +99,11 @@ class DeviceBenchmarkTest {
             return right to total
         }
 
-        // As the app runs it, then variants to choose the next default from
-        // device numbers: 0.4.0's one field at a time; int8 weights in the
-        // LSTM and head (identical results on the desktop tests); ONNX
-        // Runtime's XNNPACK kernels. Two rounds in turn, so a slow start or
-        // a background task on the phone does not decide the comparison.
-        val xnnpack: (ai.onnxruntime.OrtSession.SessionOptions) -> Unit = { it.addXnnpack(mapOf("intra_op_num_threads" to "1")) }
-        val fp32 = model("field_recognizer_v3.onnx")
-        val int8 = bench("field_recognizer_int8.onnx")
+        // As the app runs it, then as 0.4.2 did (v5 alone, one read per
+        // box), in turn, twice.
         val variants = listOf<Pair<String, () -> SheetReader>>(
             "" to { reader },
-            "_serial" to { SheetReader(FieldModel(fp32, threads = 2), 1) { text } },
-            "_int8" to { SheetReader(FieldModel(int8, threads = 1), SheetReader.defaultThreads()) { text } },
-            "_xnnpack" to { SheetReader(FieldModel(fp32, threads = 1, configure = xnnpack), SheetReader.defaultThreads()) { text } },
-            "_int8_xnnpack" to { SheetReader(FieldModel(int8, threads = 1, configure = xnnpack), SheetReader.defaultThreads()) { text } },
+            "_042" to { SheetReader(fieldModel, SheetReader.defaultThreads(), fieldModel, { words }) { text } },
         )
         var right = 0
         var total = 0

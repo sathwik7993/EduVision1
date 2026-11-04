@@ -49,6 +49,10 @@ class SheetReader(
     private val regModel: FieldModel = model,
     /** Reads handwritten words (names, courses); the printed-label reader when not given. */
     private val handwriting: (() -> PrintedTextReader)? = null,
+    /** Read each box under small crop changes and let the readings vote (see [readVoted]). */
+    private val augment: Boolean = true,
+    /** A second, differently trained model; a box it reads otherwise goes to review. */
+    private val checkModel: FieldModel? = null,
     private val textReader: () -> PrintedTextReader,
 ) {
     private fun wordReader() = handwriting?.invoke() ?: textReader()
@@ -237,7 +241,7 @@ class SheetReader(
             val crop = CellFinder.crop(patch, area) ?: return ExtractedField("", 0.0, issue = "Box not found")
             if (cell != null && CellFinder.looksBlank(crop)) return ExtractedField("", BLANK_CONFIDENCE, crop = png(crop))
             val allowed = if (text) CHARSET else DIGITS
-            val r = CtcDecoder.decode((if (text) regModel else model).run(crop), allowed)
+            val r = readVoted(if (text) regModel else model, listOf(crop), listOf(allowed)).first()
             return ExtractedField(
                 r.text, r.confidence, rawText = r.text, crop = png(crop),
                 issue = if (cell == null) "Could not find the printed box; check the value" else null,
@@ -316,11 +320,11 @@ class SheetReader(
             CellFinder.crop(patch, c.inset(0.06, 1.0))?.takeUnless { CellFinder.looksBlank(it) }?.let { i to it }
         }
         // All boxes of the comb in one model call.
-        val probs = model.runAll(written.map { it.second })
+        val reads = readVoted(model, written.map { it.second }, written.map { CtcDecoder.allowedFor(mask?.getOrNull(it.first)) })
         for ((k, w) in written.withIndex()) {
             val i = w.first
             val maskChar = mask?.getOrNull(i)
-            val r = CtcDecoder.decode(probs[k], CtcDecoder.allowedFor(maskChar))
+            val r = reads[k]
             // A box holds one character; two means the model split a stroke.
             val ch = r.text.take(1)
             text.append(ch)
@@ -333,6 +337,32 @@ class SheetReader(
             text.toString(), confidence, rawText = text.toString(), crop = crop?.let(::png),
             alternative = if (hasAlt) alt.toString() else null,
         )
+    }
+
+    /**
+     * Reads each crop as it is and under three small changes (4% tighter, 4%
+     * looser, shifted 1 px), all in one model call, and takes the majority
+     * reading. Its confidence is the least certain agreeing read times the
+     * share that agree: a reading a 1-pixel shift changes was never certain.
+     * On 5,000 held-out synthetic crops (v6 models) this cut trusted-but-wrong
+     * readings by about half at the same accuracy (docs/PROGRESS.md).
+     */
+    private fun readVoted(model: FieldModel, crops: List<Mat>, allowed: List<String>): List<Reading> {
+        if (crops.isEmpty()) return emptyList()
+        if (!augment) return model.runAll(crops).mapIndexed { i, p -> CtcDecoder.decode(p, allowed[i]) }
+        val variants = crops.map(::variants)
+        val probs = model.runAll(variants.flatten())
+        val check = checkModel?.runAll(crops)
+        var k = 0
+        return variants.mapIndexed { i, vs ->
+            val reads = vs.map { CtcDecoder.decode(probs[k++], allowed[i]) }
+            vs.drop(1).forEach { it.release() }
+            val r = vote(reads)
+            // Two models trained apart rarely make the same mistake: v6
+            // alone read a "52" as "5" at 0.90 on a synthetic sheet, v5 read 52.
+            if (check != null && CtcDecoder.decode(check[i], allowed[i]).text != r.text) r.copy(confidence = min(r.confidence, DISAGREE_CONFIDENCE))
+            else r
+        }
     }
 
     private fun assemble(reads: List<Pair<TemplateField, ExtractedField>>, imagePath: String?, timings: Map<String, Long>): ScanResult {
@@ -363,6 +393,9 @@ class SheetReader(
     }
 
     companion object {
+        /** Ceiling on a reading the check model disagrees with: review. */
+        const val DISAGREE_CONFIDENCE = 0.5
+
         /** An empty cell (no stroke at all) is a confident blank. */
         const val BLANK_CONFIDENCE = 0.97
 
@@ -379,6 +412,30 @@ class SheetReader(
         fun scaleFor(b: Box) = (96.0 / max(b.h, 1.0)).coerceIn(1.0, 6.0)
 
         fun identity(): Mat = Mat.eye(3, 3, CvType.CV_64F)
+
+        /** The crop itself, then 4% tighter, 4% looser (edge pixels repeated), 1 px to the right. */
+        fun variants(g: Mat): List<Mat> {
+            val h = g.rows(); val w = g.cols()
+            val dy = max(1, Math.round(0.04 * h).toInt()); val dx = max(1, Math.round(0.04 * w).toInt())
+            val out = arrayListOf(g)
+            if (h > 2 * dy + 4 && w > 2 * dx + 4) out += g.submat(dy, h - dy, dx, w - dx)
+            out += Mat().also { Core.copyMakeBorder(g, it, dy, dy, dx, dx, Core.BORDER_REPLICATE) }
+            // Wrap-around shift by one column, as numpy's roll in the evaluation.
+            out += Mat().also { m ->
+                if (w < 2) g.copyTo(m)
+                else Core.hconcat(listOf(g.colRange(w - 1, w), g.colRange(0, w - 1)), m)
+            }
+            return out
+        }
+
+        /** Majority text (ties: the unchanged crop's, if tied); confidence as in [readVoted]. */
+        fun vote(reads: List<Reading>): Reading {
+            val counts = reads.groupingBy { it.text }.eachCount()
+            val top = counts.values.max()
+            val text = if (counts[reads[0].text] == top) reads[0].text else counts.entries.first { it.value == top }.key
+            val agree = reads.filter { it.text == text }
+            return Reading(text, agree.minOf { it.confidence } * agree.size / reads.size)
+        }
 
         /**
          * Field threads for this machine: one per core up to 4. Each model

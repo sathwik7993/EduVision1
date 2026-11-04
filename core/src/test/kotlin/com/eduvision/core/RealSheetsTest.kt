@@ -38,13 +38,18 @@ class RealSheetsTest {
             nu.pattern.OpenCV.loadLocally()
             val models = File(root, "assets/models")
             text = PrintedTextReader(File(models, "ppocr_v3_det.onnx").readBytes(), File(models, "ppocr_v3_rec.onnx").readBytes())
-            // FIELD_MODEL / REG_MODEL: candidate models to compare on the real sheets.
-            val marks = FieldModel((System.getenv("FIELD_MODEL")?.let(::File) ?: File(models, "field_recognizer_v3.onnx")).readBytes(), threads = 1)
-            val reg = System.getenv("REG_MODEL")?.let { FieldModel(File(it).readBytes(), threads = 1) } ?: marks
-            // HANDWRITING_REC: a recognition model for handwritten text fields.
-            val words = System.getenv("HANDWRITING_REC")?.let { PrintedTextReader(null, File(it).readBytes()) }
+            // As the app reads (Scanner): v6 marks and registration models,
+            // augmented reads, v5 as the check, PP-OCRv5 for written words.
+            // FIELD_MODEL / REG_MODEL / CHECK_MODEL / HANDWRITING_REC: other
+            // model files to compare ("none" for no check / no handwriting
+            // model); READ_AUGMENT=0: single reads.
+            fun model(env: String, default: String) = (System.getenv(env)?.let(::File) ?: File(models, default))
+            val marks = FieldModel(model("FIELD_MODEL", "field_recognizer_v6_marks.onnx").readBytes(), threads = 1)
+            val reg = FieldModel(model("REG_MODEL", "field_recognizer_v6_reg.onnx").readBytes(), threads = 1)
+            val check = System.getenv("CHECK_MODEL").let { if (it == "none") null else FieldModel(model("CHECK_MODEL", "field_recognizer_v3.onnx").readBytes(), threads = 1) }
+            val words = System.getenv("HANDWRITING_REC").let { if (it == "none") null else PrintedTextReader(null, model("HANDWRITING_REC", "ppocr_v5_rec.onnx").readBytes()) }
             reader = SheetReader(marks, System.getenv("READER_THREADS")?.toInt() ?: SheetReader.defaultThreads(), reg,
-                words?.let { w -> { w } }) { text }
+                words?.let { w -> { w } }, augment = System.getenv("READ_AUGMENT") != "0", checkModel = check) { text }
         }
 
         fun gray(name: String): Mat = Imgcodecs.imread(File(root, "sample_images/$name").path, Imgcodecs.IMREAD_GRAYSCALE)
