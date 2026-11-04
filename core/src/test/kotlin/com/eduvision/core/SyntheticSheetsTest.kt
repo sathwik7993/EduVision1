@@ -34,7 +34,10 @@ class SyntheticSheetsTest {
             val want = t.jsonObject.mapValues { it.value.jsonPrimitive.content }
             listOf(r.registrationNo.value to want["registration"], r.partA.value to want["partA"], r.partB.value to want["partB"])
                 .forEach { (got, w) -> total++; if (got == w) right++ }
-            println("$name ${r.registrationNo.value} ${r.partA.value} ${r.partB.value} ${r.timingsMs} want $want")
+            val shown = listOf(r.registrationNo, r.partA, r.partB).joinToString(" ") {
+                "${it.value}(%.2f${if (it.needsReview) ",review" else ""})".format(it.confidence)
+            }
+            println("$name $shown ${r.timingsMs} want $want")
         }
         println("SYNTHETIC right $right/$total")
         assertTrue(template.fields.map { it.kind.name }.containsAll(listOf("REGISTRATION", "PART_A", "PART_B", "WRITTEN_TOTAL")))
