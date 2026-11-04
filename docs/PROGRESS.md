@@ -150,6 +150,7 @@ The Flutter app took 10-15 s per scan on the phone. Phones: see below.
 | Samsung Galaxy A03s, 0.4.1 (fields in parallel), 21 fields | 846-1005 ms (0.4.0 way: 1581-1779 ms) | 14.9 s | 12/12 |
 | Virtual Arm phone, 0.4.1, 21 fields | 210-224 ms (0.4.0 way: 247-277 ms) | 5.8 s | 12/12 |
 | Samsung Galaxy A03s, 0.4.2 (+ PP-OCRv5 for the 3 text fields) | 800-1106 ms | 15.4 s | 12/12 |
+| Virtual Arm phone, 0.4.3 (v6 + 4 reads per box + v5 check) | 174-286 ms (0.4.2 setup in the same run: 160-208 ms) | 4.6 s | 11/12 (the 12th flagged) |
 
 ### Speed (0.4.1)
 
