@@ -61,23 +61,9 @@ class DeviceBenchmarkTest {
         lap()
         val layout = reader.createTemplate(clean, "syn", "Synthetic")
         report("first_scan_layout_ms", lap())
-        // Set-up again, models warm; then with XNNPACK kernels for the two
-        // printed-text models (all convolutions), in turn, twice.
-        val cores = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
-        val xnnText = runCatching {
-            PrintedTextReader(model("ppocr_v3_det.onnx"), model("ppocr_v3_rec.onnx"), 1) {
-                it.addXnnpack(mapOf("intra_op_num_threads" to "$cores"))
-            }
-        }.onFailure { report("layout_xnnpack", "unavailable: ${it.message}") }.getOrNull()
-        val xnnReader = xnnText?.let { tr -> SheetReader(fieldModel, SheetReader.defaultThreads()) { tr } }
-        for (round in 1..2) {
-            lap(); reader.createTemplate(clean, "syn", "Synthetic"); report("layout_warm_ms_r$round", lap())
-            if (xnnReader != null) {
-                val l = xnnReader.createTemplate(clean, "syn", "Synthetic")
-                report("layout_xnnpack_ms_r$round", lap())
-                report("layout_xnnpack_fields_r$round", l.template.fields.size)
-            }
-        }
+        // Set-up again, models warm. (XNNPACK for the printed-text models
+        // crashed inside ONNX Runtime on both test phones, 0.4.1.)
+        lap(); reader.createTemplate(clean, "syn", "Synthetic"); report("layout_warm_ms", lap())
         assertNotNull("labels not found", layout)
         val template = layout!!.template.copy(registrationMask = "DDADDADDXX", partBMax = 60)
         report("layout_fields", template.fields.joinToString { it.kind.name })

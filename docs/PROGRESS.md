@@ -167,7 +167,10 @@ two alternating rounds (`DeviceBenchmarkTest`), all 12/12 read right:
 | + int8 + XNNPACK | 884 | 830 |
 
 int8 and XNNPACK are within the noise, so the app keeps the plain fp32
-model. Fully int8 (convolutions too) was rejected on the desktop tests:
+model. XNNPACK for the two printed-text models (layout set-up) crashed inside
+ONNX Runtime on both phones (SIGSEGV in libonnxruntime.so), so it is not
+used. Layout set-up with the models already loaded: A03s 12.5 s, virtual
+phone 3.8 s. Fully int8 (convolutions too) was rejected on the desktop tests:
 synthetic 11/12, layout B 10/12.
 
 0.4.0 reads every field (questions, text lines, ticks), not just four, and
